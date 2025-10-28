@@ -123,4 +123,16 @@ public class LLPConfiguration {
         copy.timeoutMillis = this.timeoutMillis;
         return copy;
     }
+    
+    /**
+     * Sets the ForkJoinPool parallelism level for streams.
+     * 
+     * @param parallelism The parallelism level
+     * @return This configuration object for chaining
+     */
+    public LLPConfiguration setStreamParallelism(int parallelism) {
+        System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", 
+                      String.valueOf(parallelism));
+        return setNumThreads(parallelism);
+    }
 }

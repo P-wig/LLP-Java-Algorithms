@@ -172,4 +172,28 @@ public interface LLPProblem<T> {
      * @return true if the state is a valid solution, false otherwise
      */
     boolean isSolution(T state);
+
+    /**
+     * Merge results from parallel operations.
+     * Default implementation returns the first non-forbidden state.
+     */
+    default T merge(T state1, T state2) {
+        if (Forbidden(state1) && !Forbidden(state2)) {
+            return state2;
+        }
+        if (!Forbidden(state1) && Forbidden(state2)) {
+            return state1;
+        }
+        return state2;
+    }
+
+    /**
+     * Stream-based parallel advance operation.
+     */
+    default T parallelAdvance(T state, int parallelism) {
+        return java.util.stream.IntStream.range(0, parallelism)
+            .parallel()
+            .mapToObj(i -> Advance(state))
+            .reduce(state, this::merge);
+    }
 }
