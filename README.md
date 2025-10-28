@@ -1,23 +1,22 @@
 # LLP-Java-Algorithms
 
-A comprehensive Java framework for implementing parallel LLP (Least Lattice Predicate) algorithms to solve various computational problems.
+A simplified Java framework for implementing parallel LLP (Least Lattice Predicate) algorithms using Java Streams to solve various computational problems.
 
 ## Overview
 
-This project provides a robust, production-ready framework for solving problems using the LLP parallel algorithm paradigm. The LLP algorithm is based on the concept of lattice theory and uses three fundamental operations:
+This project provides a streamlined framework for solving problems using the LLP parallel algorithm paradigm. The LLP algorithm is based on lattice theory and uses three fundamental operations:
 - **Forbidden**: Determines if a state violates problem constraints
 - **Ensure**: Fixes states to satisfy local constraints
 - **Advance**: Makes progress toward the solution
 
 ### Framework Features
 
-✅ **Thread-safe state management** with `LLPState`  
-✅ **Parallel execution orchestration** via `LLPEngine`  
-✅ **Flexible configuration** through `LLPConfiguration`  
-✅ **Synchronization primitives** including barriers and locks  
-✅ **Termination detection** with convergence monitoring  
-✅ **High-level API** through `LLPSolver`  
-✅ **Comprehensive documentation** and examples
+✅ **Java Streams parallelism** for coordination-free execution  
+✅ **Simplified state management** with immutable objects  
+✅ **Clean API** through `LLPSolver`  
+✅ **Embedded termination detection** with convergence monitoring  
+✅ **Educational focus** on algorithm implementation  
+✅ **Minimal complexity** for learning LLP concepts
 
 ## Project Structure
 
@@ -31,12 +30,8 @@ LLP-Java-Algorithms/
 │   │               ├── algorithm/         # Core LLP API
 │   │               │   ├── LLPProblem.java
 │   │               │   └── LLPSolver.java
-│   │               ├── framework/         # Framework infrastructure
-│   │               │   ├── LLPEngine.java
-│   │               │   ├── LLPState.java
-│   │               │   ├── LLPBarrier.java
-│   │               │   ├── LLPConfiguration.java
-│   │               │   └── LLPTerminationDetector.java
+│   │               ├── framework/         # Simplified framework
+│   │               │   └── LLPEngine.java (streams-based)
 │   │               ├── problems/          # Problem implementations (skeletons)
 │   │               │   ├── StableMarriageProblem.java
 │   │               │   ├── ParallelPrefixProblem.java
@@ -51,10 +46,28 @@ LLP-Java-Algorithms/
 │           └── com/
 │               └── llp/                   # Test cases
 ├── pom.xml                                # Maven configuration
-├── LIBRARY_API.md                         # Comprehensive API documentation
 ├── build.sh                               # Build script
 ├── run_example.sh                         # Run example script
 └── test.sh                                # Test script
+```
+
+## Simplified Architecture
+
+**✅ Simplified Components:**
+- **LLPEngine** - Now uses Java 8+ parallel streams for coordination
+- **LLPSolver** - Clean constructors with direct parameters
+- **Problem implementations** - Focus purely on algorithm logic
+
+### Core Architecture
+
+```
+Your Problem Implementation
+    ↓
+LLPSolver (simple API)
+    ↓
+LLPEngine (streams-based execution)
+    ↓
+Java Parallel Streams (automatic coordination)
 ```
 
 ## LLP Algorithm Core Concepts
@@ -75,11 +88,6 @@ This predicate determines if a given configuration is invalid or violates proble
 - In Bellman-Ford: Check if distances violate triangle inequality
 - In Connected Components: Check if component labels are inconsistent
 
-**Implementation tips**:
-- Should be efficient as it may be called frequently
-- Must correctly identify all constraint violations
-- Should return `true` only when constraints are violated
-
 #### 2. **Ensure(state) → state**
 This operation modifies the state to satisfy local constraints and remove forbidden configurations.
 
@@ -88,15 +96,7 @@ This operation modifies the state to satisfy local constraints and remove forbid
 - Maintain problem invariants
 - Ensure forward progress doesn't create permanent violations
 
-**Example use cases**:
-- In Stable Marriage: Resolve unstable pairs
-- In Bellman-Ford: Update distances that violate triangle inequality
-- In Connected Components: Merge component labels
-
-**Implementation tips**:
-- Should fix all detected violations
-- Must maintain monotonic progress in the lattice
-- May need to propagate fixes to related elements
+**Key**: Always return a **new state object** (immutable pattern)
 
 #### 3. **Advance(state) → state**
 This operation moves the state forward toward the solution, potentially creating new forbidden configurations.
@@ -106,98 +106,128 @@ This operation moves the state forward toward the solution, potentially creating
 - Explore the solution space
 - Move up in the lattice ordering
 
-**Example use cases**:
-- In Stable Marriage: Propose new matches
-- In Bellman-Ford: Relax edges
-- In Connected Components: Propagate labels
-
-**Implementation tips**:
-- Focus on making progress, not maintaining constraints
-- May create forbidden states (that's okay - Ensure will fix them)
-- Should eventually lead to convergence when alternated with Ensure
+**Key**: Focus on progress, not constraints (Ensure will fix violations)
 
 ## Quick Start
 
-### Basic Usage
+### Basic Usage (Simplified!)
 
 ```java
 import com.llp.algorithm.LLPProblem;
 import com.llp.algorithm.LLPSolver;
-import com.llp.framework.LLPConfiguration;
 
-// 1. Implement your problem
-public class MyProblem implements LLPProblem<MyState> {
+// 1. Define your state class (immutable!)
+class MyState {
+    final int value;  // Your problem data
+    
+    public MyState(int value) {
+        this.value = value;
+    }
+    
+    // Helper for creating new states
+    public MyState withValue(int newValue) {
+        return new MyState(newValue);
+    }
+}
+
+// 2. Implement your problem
+class MyProblem implements LLPProblem<MyState> {
     @Override
     public boolean Forbidden(MyState state) {
-        // TODO: Implement constraint checking
-        throw new UnsupportedOperationException("Not implemented");
+        // Return true if constraints violated
+        return state.value < 0;  // Example: negative values forbidden
     }
     
     @Override
     public MyState Ensure(MyState state) {
-        // TODO: Implement constraint fixing
-        throw new UnsupportedOperationException("Not implemented");
+        // Fix violations
+        if (Forbidden(state)) {
+            return state.withValue(0);  // Fix by setting to 0
+        }
+        return state;  // No fix needed
     }
     
     @Override
     public MyState Advance(MyState state) {
-        // TODO: Implement progress logic
-        throw new UnsupportedOperationException("Not implemented");
+        // Make progress
+        return state.withValue(state.value + 1);
     }
     
     @Override
     public MyState getInitialState() {
-        // TODO: Return initial state
-        throw new UnsupportedOperationException("Not implemented");
+        return new MyState(0);
     }
     
     @Override
     public boolean isSolution(MyState state) {
-        // TODO: Check if solution
-        throw new UnsupportedOperationException("Not implemented");
+        return state.value >= 10 && !Forbidden(state);  // Example: reach 10
     }
 }
 
-// 2. Configure and solve
+// 3. Solve (much simpler!)
 public static void main(String[] args) {
+    MyProblem problem = new MyProblem();
+    
+    // Simple constructors - no configuration objects!
+    LLPSolver<MyState> solver = new LLPSolver<>(problem);           // Defaults
+    // OR: LLPSolver<MyState> solver = new LLPSolver<>(problem, 4);     // 4 threads
+    // OR: LLPSolver<MyState> solver = new LLPSolver<>(problem, 4, 100); // 4 threads, 100 max iterations
+    
     try {
-        MyProblem problem = new MyProblem();
-        
-        // Configure the solver
-        LLPConfiguration config = new LLPConfiguration()
-            .setNumThreads(4)
-            .setMaxIterations(1000);
-        
-        // Create solver and execute
-        LLPSolver<MyState> solver = new LLPSolver<>(problem, config);
         MyState solution = solver.solve();
+        System.out.println("Solution: " + solution.value);
         
-        // Get statistics
-        System.out.println("Iterations: " + 
-            solver.getTerminationDetector().getIterationCount());
+        // Simple statistics
+        System.out.println("Threads used: " + solver.getNumThreads());
+        System.out.println("Max iterations: " + solver.getMaxIterations());
         
-        solver.shutdown();
     } catch (Exception e) {
         e.printStackTrace();
+    } finally {
+        solver.shutdown();
     }
 }
 ```
 
-### Complete API Documentation
+## Key Simplifications
 
-See [LIBRARY_API.md](LIBRARY_API.md) for comprehensive framework documentation including:
-- Detailed API reference for all classes
-- Usage patterns and best practices
-- Performance tuning guidelines
-- Thread safety considerations
-- Troubleshooting guide
+### 🎯 **Immutable State Pattern**
+```java
+// Instead of complex thread-safe state management:
+class CounterState {
+    final int value;  // Immutable!
+    
+    public CounterState withValue(int newValue) {
+        return new CounterState(newValue);  // Always create new
+    }
+}
+```
+
+### 🔄 **Java Streams Parallelism**
+```java
+// Framework uses streams internally:
+IntStream.range(0, parallelism)
+    .parallel()                              // Automatic parallelization
+    .mapToObj(i -> problem.Advance(state))   // Your method called in parallel
+    .reduce(state, this::mergeStates);       // Automatic coordination
+```
+
+### ⚡ **Simple Configuration**
+```java
+// Old way (removed):
+// LLPConfiguration config = new LLPConfiguration().setNumThreads(4).setMaxIterations(100);
+// LLPSolver<State> solver = new LLPSolver<>(problem, config);
+
+// New way:
+LLPSolver<State> solver = new LLPSolver<>(problem, 4, 100);  // Direct parameters
+```
 
 ## Example: Simple Counter Problem
 
 See `src/main/java/com/llp/examples/SimpleLLPExample.java` for a complete working example that demonstrates:
-- How to define a state class
+- How to define an immutable state class
 - How to implement the three core methods
-- How to use the LLP framework
+- How to use the simplified LLP framework
 
 Run the example:
 ```bash
@@ -209,28 +239,43 @@ Run the example:
 This assignment requires implementing the following problems using the LLP framework:
 
 1. **Stable Marriage Problem** (`StableMarriageProblem.java`)
-   - Match n men and n women based on preference lists
-   - Ensure no unstable pairs exist
-
-2. **Parallel Prefix Problem** (`ParallelPrefixProblem.java`)
-   - Compute all prefix sums of an array in parallel
-   - Also known as scan operation
-
+2. **Parallel Prefix Problem** (`ParallelPrefixProblem.java`)  
 3. **Connected Components** (`ConnectedComponentsProblem.java`)
-   - Find connected components in an undirected graph
-   - Use the fast parallel algorithm
-
 4. **Bellman-Ford Algorithm** (`BellmanFordProblem.java`)
-   - Find shortest paths from a source vertex
-   - Handle negative edge weights
-
 5. **Johnson's Algorithm** (`JohnsonProblem.java`)
-   - Find all-pairs shortest paths
-   - Combine reweighting with Bellman-Ford/Dijkstra
-
 6. **Boruvka's Algorithm** (`BoruvkaProblem.java`)
-   - Find minimum spanning tree/forest
-   - Use parallel edge selection
+
+### Implementation Template
+
+Each problem follows this pattern:
+
+```java
+// 1. State class (your data structure)
+class YourState {
+    final SomeType data;  // Immutable fields
+    
+    public YourState withData(SomeType newData) {
+        return new YourState(newData);  // Immutable pattern
+    }
+}
+
+// 2. Problem class (your algorithm)
+class YourProblem implements LLPProblem<YourState> {
+    public boolean Forbidden(YourState state) { /* constraint check */ }
+    public YourState Ensure(YourState state) { /* fix violations */ }
+    public YourState Advance(YourState state) { /* make progress */ }
+    public YourState getInitialState() { /* starting point */ }
+    public boolean isSolution(YourState state) { /* done check */ }
+}
+
+// 3. Main method (solve it)
+public static void main(String[] args) {
+    YourProblem problem = new YourProblem(/* parameters */);
+    LLPSolver<YourState> solver = new LLPSolver<>(problem);
+    YourState solution = solver.solve();
+    solver.shutdown();
+}
+```
 
 ## Building and Running
 
@@ -243,9 +288,9 @@ This assignment requires implementing the following problems using the LLP frame
 ./build.sh
 ```
 
-Or manually:
+### Run Example
 ```bash
-mvn clean compile
+./run_example.sh
 ```
 
 ### Run Tests
@@ -253,104 +298,52 @@ mvn clean compile
 ./test.sh
 ```
 
-Or manually:
-```bash
-mvn test
-```
+## Framework Benefits
 
-### Run Example
-```bash
-./run_example.sh
-```
+### 🚀 **Automatic Parallelization**
+- Java Streams handle thread management
+- ForkJoinPool provides work-stealing
+- No manual barrier synchronization needed
 
-Or manually:
-```bash
-mvn compile exec:java -Dexec.mainClass="com.llp.examples.SimpleLLPExample"
-```
+### 📚 **Educational Focus**  
+- Simple, understandable code
+- Focus on algorithm logic, not framework complexity
+- Clear separation of concerns
 
-## Development Tips
+### 🔧 **Easy to Use**
+- Minimal configuration
+- Direct constructor parameters
+- No complex builder patterns
 
-1. **Start with the state representation**: Think carefully about how to represent the problem state. It should capture all necessary information.
-
-2. **Implement Forbidden first**: Clearly define what makes a state invalid. This guides the implementation of Ensure.
-
-3. **Make Ensure correct**: Ensure should fix all violations detected by Forbidden. Test this relationship thoroughly.
-
-4. **Make Advance progressive**: Advance should move toward the solution. It's okay if it creates forbidden states temporarily.
-
-5. **Test incrementally**: Test each method independently before combining them in the full algorithm.
-
-6. **Consider parallelism**: Think about which operations can be performed in parallel on independent parts of the state.
-
-## Framework Architecture
-
-### Core Components
-
-1. **LLPProblem Interface**: Defines the three core operations (Forbidden, Ensure, Advance)
-2. **LLPSolver**: High-level API for executing LLP algorithms
-3. **LLPEngine**: Orchestrates parallel execution across threads
-4. **LLPState**: Thread-safe state container with synchronization
-5. **LLPBarrier**: Synchronization barrier for thread coordination
-6. **LLPTerminationDetector**: Monitors convergence and termination conditions
-7. **LLPConfiguration**: Flexible configuration builder
-
-### Execution Flow
+## Execution Flow (Simplified)
 
 ```
 Initialize State
      ↓
-┌────────────────────┐
-│ For each iteration │←─────┐
-└────────────────────┘      │
-     ↓                       │
-┌────────────────────┐      │
-│ Parallel Advance   │      │
-│ across threads     │      │
-└────────────────────┘      │
-     ↓                       │
-┌────────────────────┐      │
-│ Barrier Sync       │      │
-└────────────────────┘      │
-     ↓                       │
-┌────────────────────┐      │
-│ Parallel Ensure    │      │
-│ across threads     │      │
-└────────────────────┘      │
-     ↓                       │
-┌────────────────────┐      │
-│ Check Termination  │      │
-└────────────────────┘      │
-     ↓                       │
-   Not Done ─────────────────┘
+┌─────────────────────────┐
+│ For each iteration      │←──────┐
+└─────────────────────────┘       │
+     ↓                             │
+┌─────────────────────────┐       │
+│ Parallel Advance        │       │
+│ (Java Streams)          │       │
+└─────────────────────────┘       │
+     ↓                             │
+┌─────────────────────────┐       │
+│ Parallel Ensure         │       │
+│ (Java Streams)          │       │
+└─────────────────────────┘       │
+     ↓                             │
+┌─────────────────────────┐       │
+│ Check Convergence       │       │
+└─────────────────────────┘       │
+     ↓                             │
+   Continue ──────────────────────┘
      ↓
    Done
      ↓
   Return Solution
 ```
-
-## Implementation Notes
-
-- The framework provides complete parallel execution infrastructure
-- Problem implementations must provide the three core methods (Forbidden, Ensure, Advance)
-- Each problem skeleton includes TODO comments indicating what needs to be implemented
-- Focus on correctness first, then optimize for performance
-- Use appropriate data structures for efficient parallel access
-- The framework handles all thread management, synchronization, and termination detection
-
-## Submission Requirements
-
-When submitting your assignment:
-1. Source code for all implemented problems
-2. Test cases demonstrating correctness
-3. A script file that runs your program
-4. Partner name (if working in a pair)
-5. Any test case generation programs you created
-
-## References
-
-- Lattice theory and LLP algorithms
-- Parallel algorithm design patterns
-- Problem-specific algorithm documentation
 
 ## License
 
