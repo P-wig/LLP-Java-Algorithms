@@ -5,19 +5,23 @@ import java.util.stream.IntStream;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Streams-based execution engine for parallel LLP algorithms.
- * Uses Java 8+ parallel streams for coordination-free parallelism.
+ * Simplified streams-based execution engine for parallel LLP algorithms.
+ * Uses Java 8+ parallel streams with embedded termination detection.
  */
 public class LLPEngine<T> {
     
     private final LLPProblem<T> problem;
     private final int parallelism;
-    private final LLPTerminationDetector terminationDetector;
+    private final int maxIterations;
+    
+    // Simple termination tracking
+    private int iterationCount = 0;
+    private boolean converged = false;
     
     public LLPEngine(LLPProblem<T> problem, int parallelism, int maxIterations) {
         this.problem = problem;
         this.parallelism = parallelism;
-        this.terminationDetector = new LLPTerminationDetector(maxIterations);
+        this.maxIterations = maxIterations;
         
         // Set parallelism for streams
         System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", 
@@ -29,9 +33,9 @@ public class LLPEngine<T> {
      */
     public T execute(T initialState) {
         AtomicReference<T> currentState = new AtomicReference<>(initialState);
+        T previousState = initialState;
         
-        while (!terminationDetector.shouldTerminate()) {
-            terminationDetector.incrementIteration();
+        for (iterationCount = 0; iterationCount < maxIterations; iterationCount++) {
             
             // Advance Phase - parallel streams
             T afterAdvance = IntStream.range(0, parallelism)
@@ -47,12 +51,22 @@ public class LLPEngine<T> {
                 .reduce(currentState.get(), this::mergeStates);
             currentState.set(afterEnsure);
             
-            // Check termination
+            // Check termination conditions
             T current = currentState.get();
+            
+            // Solution found?
             if (problem.isSolution(current) && !problem.Forbidden(current)) {
-                terminationDetector.markConverged();
+                converged = true;
                 break;
             }
+            
+            // No progress made?
+            if (current.equals(previousState)) {
+                converged = true;
+                break;
+            }
+            
+            previousState = current;
         }
         
         return currentState.get();
@@ -72,8 +86,13 @@ public class LLPEngine<T> {
         return state2; // Default to second state
     }
     
-    public LLPTerminationDetector getTerminationDetector() {
-        return terminationDetector;
+    // Simple getters for statistics
+    public int getIterationCount() {
+        return iterationCount;
+    }
+    
+    public boolean hasConverged() {
+        return converged;
     }
     
     public int getNumThreads() {

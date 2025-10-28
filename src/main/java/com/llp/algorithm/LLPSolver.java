@@ -1,71 +1,64 @@
 package com.llp.algorithm;
 
-import com.llp.framework.LLPConfiguration;
 import com.llp.framework.LLPEngine;
-import com.llp.framework.LLPTerminationDetector;
-
 import java.util.concurrent.*;
 
 /**
- * The LLPSolver provides a high-level API for solving problems using the
- * parallel LLP (Least Lattice Predicate) algorithm framework.
- * 
- * This class wraps the LLPEngine and provides a simpler interface for
- * executing LLP algorithms with sensible defaults.
+ * Simplified LLPSolver without configuration complexity.
+ * Provides a clean API for solving LLP problems with sensible defaults.
  * 
  * @param <T> The type representing the state or configuration in the lattice
  */
 public class LLPSolver<T> {
     
     private final LLPProblem<T> problem;
-    private final LLPConfiguration config;
+    private final int numThreads;
+    private final int maxIterations;
     private LLPEngine<T> engine;
     
     /**
-     * Creates a new LLPSolver for the given problem with a custom configuration.
+     * Creates a new LLPSolver with default settings.
+     * Uses available processor count for threads and 1000 max iterations.
      * 
      * @param problem The problem to solve
-     * @param config The configuration settings
      */
-    public LLPSolver(LLPProblem<T> problem, LLPConfiguration config) {
-        this.problem = problem;
-        this.config = config;
+    public LLPSolver(LLPProblem<T> problem) {
+        this(problem, Runtime.getRuntime().availableProcessors(), 1000);
     }
     
     /**
-     * Creates a new LLPSolver for the given problem with specified thread count.
+     * Creates a new LLPSolver with specified thread count.
+     * Uses 1000 max iterations.
      * 
      * @param problem The problem to solve
      * @param numThreads The number of parallel threads to use
      */
     public LLPSolver(LLPProblem<T> problem, int numThreads) {
-        this.problem = problem;
-        this.config = new LLPConfiguration().setNumThreads(numThreads);
+        this(problem, numThreads, 1000);
     }
     
     /**
-     * Creates a new LLPSolver with default configuration
-     * (uses available processor count for threads).
+     * Creates a new LLPSolver with specified thread count and max iterations.
      * 
      * @param problem The problem to solve
+     * @param numThreads The number of parallel threads to use
+     * @param maxIterations The maximum number of iterations
      */
-    public LLPSolver(LLPProblem<T> problem) {
+    public LLPSolver(LLPProblem<T> problem, int numThreads, int maxIterations) {
+        if (numThreads < 1) {
+            throw new IllegalArgumentException("Number of threads must be at least 1");
+        }
+        if (maxIterations < 1) {
+            throw new IllegalArgumentException("Max iterations must be at least 1");
+        }
+        
         this.problem = problem;
-        this.config = new LLPConfiguration();
+        this.numThreads = numThreads;
+        this.maxIterations = maxIterations;
     }
     
     /**
      * Solves the problem using the parallel LLP algorithm framework.
-     * 
-     * The algorithm structure:
-     * 1. Initialize state from problem
-     * 2. Create LLPEngine with configuration
-     * 3. Execute parallel LLP algorithm:
-     *    a. Apply Advance operations in parallel
-     *    b. Synchronize threads at barrier
-     *    c. Apply Ensure operations in parallel
-     *    d. Check convergence and termination conditions
-     * 4. Return the solution state
      * 
      * @return The solution state
      * @throws InterruptedException if the solving process is interrupted
@@ -76,11 +69,7 @@ public class LLPSolver<T> {
         T initialState = problem.getInitialState();
         
         // Create and configure the engine
-        engine = new LLPEngine<>(
-            problem, 
-            config.getNumThreads(), 
-            config.getMaxIterations()
-        );
+        engine = new LLPEngine<>(problem, numThreads, maxIterations);
         
         // Execute the parallel LLP algorithm
         T solution = engine.execute(initialState);
@@ -89,22 +78,27 @@ public class LLPSolver<T> {
     }
     
     /**
-     * Gets the termination detector from the current engine.
-     * Useful for checking execution statistics after solving.
+     * Gets execution statistics after solving.
      * 
-     * @return The termination detector, or null if solve() hasn't been called
+     * @return A simple object with iteration count and convergence status
      */
-    public LLPTerminationDetector getTerminationDetector() {
-        return engine != null ? engine.getTerminationDetector() : null;
+    public ExecutionStats getExecutionStats() {
+        if (engine == null) return null;
+        return new ExecutionStats(engine.getIterationCount(), engine.hasConverged());
     }
-    
-    /**
-     * Gets the configuration used by this solver.
-     * 
-     * @return The configuration
-     */
-    public LLPConfiguration getConfiguration() {
-        return config;
+
+    // Simple stats class
+    public static class ExecutionStats {
+        public final int iterationCount;
+        public final boolean converged;
+        
+        public ExecutionStats(int iterationCount, boolean converged) {
+            this.iterationCount = iterationCount;
+            this.converged = converged;
+        }
+        
+        public int getIterationCount() { return iterationCount; }
+        public boolean hasConverged() { return converged; }
     }
     
     /**
@@ -113,7 +107,16 @@ public class LLPSolver<T> {
      * @return The number of threads
      */
     public int getNumThreads() {
-        return config.getNumThreads();
+        return numThreads;
+    }
+    
+    /**
+     * Gets the maximum iterations used by this solver.
+     * 
+     * @return The maximum iterations
+     */
+    public int getMaxIterations() {
+        return maxIterations;
     }
     
     /**
