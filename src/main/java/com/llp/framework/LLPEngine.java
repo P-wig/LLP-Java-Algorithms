@@ -5,7 +5,7 @@ import java.util.stream.IntStream;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Flexible streams-based execution engine that properly uses Forbidden.
+ * Minimal streams-based execution engine for parallel LLP algorithms.
  */
 public class LLPEngine<T> {
     
@@ -28,39 +28,40 @@ public class LLPEngine<T> {
     }
     
     /**
-     * Execute using streams-based parallel approach with proper Forbidden usage.
+     * Execute using streams-based parallel approach.
      */
     public T execute(T initialState) {
         AtomicReference<T> currentState = new AtomicReference<>(initialState);
         T previousState = initialState;
         
+        System.out.println("Starting LLP execution with " + parallelism + " threads...");
+        
         for (iterationCount = 0; iterationCount < maxIterations; iterationCount++) {
             
-            T current = currentState.get();
+            T current = currentState.get();  // Get current state
             
-            // PROPER FORBIDDEN USAGE - Check state first
+            // Check if current state is forbidden
             if (problem.Forbidden(current)) {
-                // State is forbidden - fix it with Ensure
+                // Fix violations with parallel Ensure
                 T afterEnsure = IntStream.range(0, parallelism)
                     .parallel()
-                    .mapToObj(i -> problem.Ensure(currentState.get()))
-                    .reduce(currentState.get(), this::mergeStates);
+                    .mapToObj(i -> problem.Ensure(current))
+                    .reduce(current, this::mergeStates);
                 currentState.set(afterEnsure);
                 
                 System.out.println("  Iteration " + iterationCount + ": Fixed forbidden state");
                 
             } else {
-                // State is valid - make progress with Advance
+                // Make progress with parallel Advance
                 T afterAdvance = IntStream.range(0, parallelism)
                     .parallel()
-                    .mapToObj(i -> problem.Advance(currentState.get()))
-                    .reduce(currentState.get(), this::mergeStates);
+                    .mapToObj(i -> problem.Advance(current))
+                    .reduce(current, this::mergeStates);
                 currentState.set(afterAdvance);
                 
-                // Check if Advance created forbidden state
+                // Check if Advance created violations and fix them
                 T advanced = currentState.get();
                 if (problem.Forbidden(advanced)) {
-                    // Fix the violation immediately
                     T afterEnsure = IntStream.range(0, parallelism)
                         .parallel()
                         .mapToObj(i -> problem.Ensure(advanced))
@@ -73,66 +74,49 @@ public class LLPEngine<T> {
                 }
             }
             
-            // Check termination conditions
-            current = currentState.get();
-            
-            // Solution found?
-            if (problem.isSolution(current)) {
-                // Final verification - solution must not be forbidden
-                if (!problem.Forbidden(current)) {
-                    converged = true;
-                    break;
-                } else {
-                    // Solution is forbidden - this shouldn't happen but fix it
-                    currentState.set(problem.Ensure(current));
-                }
-            }
-            
-            // No progress made?
-            if (current.equals(previousState)) {
+            // Check for solution - get fresh state reference
+            T finalState = currentState.get();
+            if (problem.isSolution(finalState)) {
+                System.out.println("  ✓ Solution found at iteration " + iterationCount);
                 converged = true;
                 break;
             }
             
-            previousState = current;
+            // Check for convergence (no progress)
+            if (finalState.equals(previousState)) {
+                System.out.println("  ✓ Converged (no change) at iteration " + iterationCount);
+                converged = true;
+                break;
+            }
+            
+            previousState = finalState;  // Update for next iteration
+        }
+        
+        if (!converged) {
+            System.out.println("  ! Reached max iterations: " + maxIterations);
         }
         
         return currentState.get();
     }
     
     /**
-     * Merge states from parallel operations - prefers non-forbidden states.
+     * Merge states from parallel operations - prefers valid states.
      */
     private T mergeStates(T state1, T state2) {
-        boolean forbidden1 = problem.Forbidden(state1);
-        boolean forbidden2 = problem.Forbidden(state2);
-        
         // Prefer non-forbidden states
-        if (forbidden1 && !forbidden2) {
+        if (problem.Forbidden(state1) && !problem.Forbidden(state2)) {
             return state2;
         }
-        if (!forbidden1 && forbidden2) {
+        if (!problem.Forbidden(state1) && problem.Forbidden(state2)) {
             return state1;
         }
-        
-        // Both same forbidden status - choose arbitrarily
+        // Both same status - return second (arbitrary choice)
         return state2;
     }
     
-    // Simple getters for statistics
-    public int getIterationCount() {
-        return iterationCount;
-    }
-    
-    public boolean hasConverged() {
-        return converged;
-    }
-    
-    public int getNumThreads() {
-        return parallelism;
-    }
-    
-    public void shutdown() {
-        // No explicit cleanup needed for streams
-    }
+    // Getters for statistics
+    public int getIterationCount() { return iterationCount; }
+    public boolean hasConverged() { return converged; }
+    public int getNumThreads() { return parallelism; }
+    public void shutdown() { /* No cleanup needed for streams */ }
 }
