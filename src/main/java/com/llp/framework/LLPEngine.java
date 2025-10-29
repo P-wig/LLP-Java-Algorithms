@@ -55,7 +55,10 @@ public class LLPEngine<T> {
                 // Make progress with parallel Advance
                 T afterAdvance = IntStream.range(0, parallelism)
                     .parallel()
-                    .mapToObj(i -> problem.Advance(current))
+                    .mapToObj(threadId -> {
+                        // Each thread works on different part
+                        return problem.AdvanceWithContext(current, threadId, parallelism);
+                    })
                     .reduce(current, this::mergeStates);
                 currentState.set(afterAdvance);
                 

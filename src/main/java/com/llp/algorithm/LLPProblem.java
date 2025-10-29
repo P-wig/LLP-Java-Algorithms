@@ -196,4 +196,20 @@ public interface LLPProblem<T> {
             .mapToObj(i -> Advance(state))
             .reduce(state, this::merge);
     }
+
+    /**
+     * Advance with context for thread-specific operations.
+     * Default implementation just calls Advance(state).
+     */
+    default T AdvanceWithContext(T state, int threadId, int totalThreads) {
+        return Advance(state);  // Default fallback
+    }
+
+    /**
+     * Ensure with context for thread-specific operations.
+     * Default implementation just calls Ensure(state).
+     */
+    default T EnsureWithContext(T state, int threadId, int totalThreads) {
+        return Ensure(state);   // Default fallback
+    }
 }

@@ -4,111 +4,159 @@ import com.llp.algorithm.LLPProblem;
 import com.llp.algorithm.LLPSolver;
 
 import java.util.Arrays;
-import java.util.Random;
 
 /**
- * Simple LLP Example - Demonstrates the framework with a basic counter problem.
+ * Parallel Prefix Sum Example - Demonstrates real parallel computation.
  * 
- * Problem: Count from 0 to a target value, but sometimes we "overshoot" and need correction.
- * - Forbidden: when value > target (overshoot)
- * - Ensure: fix overshoot by setting value = target
- * - Advance: increment value toward target
+ * Problem: Compute prefix sums of an array in parallel
+ * - Input: [1, 2, 3, 4, 5]
+ * - Output: [1, 3, 6, 10, 15]  (prefix sums)
+ * - Forbidden: prefix[i] != sum(array[0..i])
+ * - Advance: compute prefix[i] = prefix[i-1] + array[i]
+ * - Ensure: fix incorrect prefix sums
  */
 public class SimpleLLPExample {
     
     /**
-     * Immutable state class for the array sum problem.
+     * State for parallel prefix sum computation.
      */
-    static class ArraySumState {
-        final int[] array;        // Original array (readonly)
-        final int[] partialSums;  // Partial sums computed so far
-        final boolean[] computed; // Which elements have been computed
+    static class PrefixSumState {
+        final int[] array;      // Original array (readonly)
+        final int[] prefixSum;  // Prefix sums being computed
+        final boolean[] computed; // Which prefix sums are computed
         
-        public ArraySumState(int[] array) {
+        public PrefixSumState(int[] array) {
             this.array = array.clone();
-            this.partialSums = new int[array.length];
+            this.prefixSum = new int[array.length];
             this.computed = new boolean[array.length];
         }
         
-        public ArraySumState(int[] array, int[] partialSums, boolean[] computed) {
+        public PrefixSumState(int[] array, int[] prefixSum, boolean[] computed) {
             this.array = array.clone();
-            this.partialSums = partialSums.clone();
+            this.prefixSum = prefixSum.clone();
             this.computed = computed.clone();
         }
         
-        public ArraySumState withComputed(int index, int sum) {
-            int[] newSums = partialSums.clone();
+        public PrefixSumState withPrefixSum(int index, int sum) {
+            int[] newPrefixSum = prefixSum.clone();
             boolean[] newComputed = computed.clone();
-            newSums[index] = sum;
+            newPrefixSum[index] = sum;
             newComputed[index] = true;
-            return new ArraySumState(array, newSums, newComputed);
+            return new PrefixSumState(array, newPrefixSum, newComputed);
         }
         
         @Override
         public String toString() {
-            return String.format("ArraySum{sums=%s, computed=%s}", 
-                               Arrays.toString(partialSums), Arrays.toString(computed));
+            return String.format("PrefixSum{array=%s, prefix=%s, computed=%s}", 
+                               Arrays.toString(array), 
+                               Arrays.toString(prefixSum), 
+                               Arrays.toString(computed));
         }
         
         @Override
         public boolean equals(Object obj) {
             if (this == obj) return true;
-            if (!(obj instanceof ArraySumState)) return false;
-            ArraySumState other = (ArraySumState) obj;
-            return Arrays.equals(partialSums, other.partialSums) && 
+            if (!(obj instanceof PrefixSumState)) return false;
+            PrefixSumState other = (PrefixSumState) obj;
+            return Arrays.equals(array, other.array) && 
+                   Arrays.equals(prefixSum, other.prefixSum) && 
                    Arrays.equals(computed, other.computed);
         }
     }
 
     /**
-     * Problem implementation for computing the sum of an array using the LLP framework.
+     * Parallel prefix sum problem using LLP framework.
      */
-    static class ArraySumProblem implements LLPProblem<ArraySumState> {
+    static class PrefixSumProblem implements LLPProblem<PrefixSumState> {
         
         @Override
-        public boolean Forbidden(ArraySumState state) {
-            // State is forbidden if any computed sum is wrong
+        public boolean Forbidden(PrefixSumState state) {
+            // Check if any computed prefix sum is incorrect
             for (int i = 0; i < state.array.length; i++) {
-                if (state.computed[i] && state.partialSums[i] != state.array[i]) {
-                    return true;
+                if (state.computed[i]) {
+                    int expectedSum = computeExpectedPrefix(state.array, i);
+                    if (state.prefixSum[i] != expectedSum) {
+                        return true; // Incorrect prefix sum
+                    }
                 }
             }
             return false;
         }
         
         @Override
-        public ArraySumState Ensure(ArraySumState state) {
-            ArraySumState result = state;
+        public PrefixSumState Ensure(PrefixSumState state) {
+            // Fix any incorrect prefix sums
+            PrefixSumState result = state;
             for (int i = 0; i < state.array.length; i++) {
-                if (state.computed[i] && state.partialSums[i] != state.array[i]) {
-                    System.out.println("    Fixing sum at " + i + ": " + state.partialSums[i] + " → " + state.array[i]);
-                    result = result.withComputed(i, state.array[i]);
+                if (state.computed[i]) {
+                    int expectedSum = computeExpectedPrefix(state.array, i);
+                    if (state.prefixSum[i] != expectedSum) {
+                        System.out.println("    Fixing prefix[" + i + "]: " + 
+                                         state.prefixSum[i] + " → " + expectedSum);
+                        result = result.withPrefixSum(i, expectedSum);
+                    }
                 }
             }
             return result;
         }
         
         @Override
-        public ArraySumState Advance(ArraySumState state) {
-            // Find an uncomputed element and compute it
-            Random rand = new Random();
-            for (int attempt = 0; attempt < state.array.length; attempt++) {
-                int i = rand.nextInt(state.array.length);
-                if (!state.computed[i]) {
-                    System.out.println("    Thread computing element " + i + ": " + state.array[i]);
-                    return state.withComputed(i, state.array[i]);
+        public PrefixSumState Advance(PrefixSumState state) {
+            // Find an element whose prefix sum can be computed
+            long threadId = Thread.currentThread().getId();
+            int startIndex = (int)(threadId % state.array.length);
+            
+            for (int offset = 0; offset < state.array.length; offset++) {
+                int i = (startIndex + offset) % state.array.length;
+                
+                if (!state.computed[i] && canCompute(state, i)) {
+                    int prefixSum;
+                    if (i == 0) {
+                        // First element: prefix[0] = array[0]
+                        prefixSum = state.array[0];
+                    } else {
+                        // Other elements: prefix[i] = prefix[i-1] + array[i]
+                        prefixSum = state.prefixSum[i-1] + state.array[i];
+                    }
+                    
+                    System.out.println("    Thread-" + threadId + " computing prefix[" + i + "]: " + 
+                                     (i == 0 ? state.array[i] : state.prefixSum[i-1] + " + " + state.array[i]) + 
+                                     " = " + prefixSum);
+                    return state.withPrefixSum(i, prefixSum);
                 }
             }
-            return state; // All computed
+            return state; // No progress possible
+        }
+        
+        /**
+         * Check if prefix[i] can be computed (dependencies satisfied).
+         */
+        private boolean canCompute(PrefixSumState state, int i) {
+            if (i == 0) {
+                return true; // First element can always be computed
+            }
+            return state.computed[i-1]; // Need previous prefix sum
+        }
+        
+        /**
+         * Compute expected prefix sum for validation.
+         */
+        private int computeExpectedPrefix(int[] array, int index) {
+            int sum = 0;
+            for (int i = 0; i <= index; i++) {
+                sum += array[i];
+            }
+            return sum;
         }
         
         @Override
-        public ArraySumState getInitialState() {
-            return new ArraySumState(new int[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        public PrefixSumState getInitialState() {
+            return new PrefixSumState(new int[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
         }
         
         @Override
-        public boolean isSolution(ArraySumState state) {
+        public boolean isSolution(PrefixSumState state) {
+            // All prefix sums must be computed
             for (boolean c : state.computed) {
                 if (!c) return false;
             }
@@ -117,16 +165,18 @@ public class SimpleLLPExample {
     }
     
     public static void main(String[] args) {
-        System.out.println("=== Parallel Array Sum Example ===\n");
+        System.out.println("=== Parallel Prefix Sum Example ===\n");
         
         // Problem parameters
-        int numThreads = 4;  // More threads to see parallelism
+        int numThreads = 2;
         int maxIterations = 100;
         
         // Create the problem
-        ArraySumProblem problem = new ArraySumProblem();
+        PrefixSumProblem problem = new PrefixSumProblem();
         
-        System.out.println("Problem: Compute array sum in parallel");
+        System.out.println("Problem: Compute prefix sums in parallel");
+        System.out.println("Input array: " + Arrays.toString(problem.getInitialState().array));
+        System.out.println("Expected output: [1, 3, 6, 10, 15, 21, 28, 36, 45, 55]");
         System.out.println("Initial state: " + problem.getInitialState());
         System.out.println("Threads: " + numThreads);
         
@@ -134,25 +184,32 @@ public class SimpleLLPExample {
         solveProblem(problem, numThreads, maxIterations);
     }
 
-    private static void solveProblem(ArraySumProblem problem, int numThreads, int maxIterations) {
+    private static void solveProblem(PrefixSumProblem problem, int numThreads, int maxIterations) {
         System.out.println("\n--- Framework Solution ---");
         
-        LLPSolver<ArraySumState> solver = null;
+        LLPSolver<PrefixSumState> solver = null;
         
         try {
-            // Create solver with simple constructor
             solver = new LLPSolver<>(problem, numThreads, maxIterations);
             
             System.out.println("Solving with LLP framework...");
             
             long startTime = System.currentTimeMillis();
-            ArraySumState solution = solver.solve();
+            PrefixSumState solution = solver.solve();
             long endTime = System.currentTimeMillis();
             
-            System.out.println("\n✓ Solution found: " + solution);
+            System.out.println("\n✓ Solution found!");
+            System.out.println("Input array:  " + Arrays.toString(solution.array));
+            System.out.println("Prefix sums:  " + Arrays.toString(solution.prefixSum));
+            System.out.println("Computed:     " + Arrays.toString(solution.computed));
             System.out.println("Execution time: " + (endTime - startTime) + "ms");
             System.out.println("Is valid solution? " + problem.isSolution(solution));
             System.out.println("Is forbidden? " + problem.Forbidden(solution));
+            
+            // Verify correctness
+            int[] expected = {1, 3, 6, 10, 15, 21, 28, 36, 45, 55};
+            boolean correct = Arrays.equals(solution.prefixSum, expected);
+            System.out.println("Correct result? " + correct);
             
             // Get statistics
             LLPSolver.ExecutionStats stats = solver.getExecutionStats();
