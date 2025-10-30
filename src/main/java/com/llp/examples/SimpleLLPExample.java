@@ -6,77 +6,123 @@ import com.llp.algorithm.LLPSolver;
 import java.util.Arrays;
 
 /**
- * Parallel Prefix Sum Example - Demonstrates real parallel computation.
+ * Parallel Array Maximum Finding Example - Demonstrates TRUE parallel computation.
  * 
- * Problem: Compute prefix sums of an array in parallel
- * - Input: [1, 2, 3, 4, 5]
- * - Output: [1, 3, 6, 10, 15]  (prefix sums)
- * - Forbidden: prefix[i] != sum(array[0..i])
- * - Advance: compute prefix[i] = prefix[i-1] + array[i]
- * - Ensure: fix incorrect prefix sums
+ * Problem: Find maximum element in each segment of an array in parallel
+ * - Input: [15, 22, 8, 31, 9, 43, 7, 54, 6, 19, 3, 28]  (12 elements)
+ * - With 4 threads: segment 0=[15,22,8], segment 1=[31,9,43], segment 2=[7,54,6], segment 3=[19,3,28]
+ * - Output: [22, 43, 54, 28]  (max of each segment)
+ * - Forbidden: any segment has incorrect maximum
+ * - Advance: compute maximum for assigned segment (DIFFERENT threads work on DIFFERENT segments)
+ * - Ensure: fix incorrect maximums
  */
 public class SimpleLLPExample {
     
     /**
-     * State for parallel prefix sum computation.
+     * State for parallel maximum finding computation.
      */
-    static class PrefixSumState {
-        final int[] array;      // Original array (readonly)
-        final int[] prefixSum;  // Prefix sums being computed
-        final boolean[] computed; // Which prefix sums are computed
+    static class MaxFindingState {
+        final int[] array;        // Original array (readonly)
+        final int[] segmentMaxs;  // Maximum of each segment
+        final boolean[] computed; // Which segments are processed
+        final int segmentSize;    // Elements per segment
         
-        public PrefixSumState(int[] array) {
+        public MaxFindingState(int[] array, int numSegments) {
             this.array = array.clone();
-            this.prefixSum = new int[array.length];
-            this.computed = new boolean[array.length];
+            this.segmentMaxs = new int[numSegments];
+            this.computed = new boolean[numSegments];
+            this.segmentSize = (int) Math.ceil((double) array.length / numSegments);
+            
+            // Initialize with minimum values
+            Arrays.fill(segmentMaxs, Integer.MIN_VALUE);
         }
         
-        public PrefixSumState(int[] array, int[] prefixSum, boolean[] computed) {
+        public MaxFindingState(int[] array, int[] segmentMaxs, boolean[] computed, int segmentSize) {
             this.array = array.clone();
-            this.prefixSum = prefixSum.clone();
+            this.segmentMaxs = segmentMaxs.clone();
             this.computed = computed.clone();
+            this.segmentSize = segmentSize;
         }
         
-        public PrefixSumState withPrefixSum(int index, int sum) {
-            int[] newPrefixSum = prefixSum.clone();
+        public MaxFindingState withSegmentMax(int segmentId, int max) {
+            int[] newMaxs = segmentMaxs.clone();
             boolean[] newComputed = computed.clone();
-            newPrefixSum[index] = sum;
-            newComputed[index] = true;
-            return new PrefixSumState(array, newPrefixSum, newComputed);
+            newMaxs[segmentId] = max;
+            newComputed[segmentId] = true;
+            return new MaxFindingState(array, newMaxs, newComputed, segmentSize);
+        }
+        
+        /**
+         * Merge this state with another state, combining computed segments.
+         */
+        public MaxFindingState mergeWith(MaxFindingState other) {
+            int[] newMaxs = segmentMaxs.clone();
+            boolean[] newComputed = computed.clone();
+            
+            // Copy computed segments from other state
+            for (int i = 0; i < segmentMaxs.length; i++) {
+                if (other.computed[i] && !computed[i]) {
+                    newMaxs[i] = other.segmentMaxs[i];
+                    newComputed[i] = true;
+                } else if (other.computed[i] && computed[i]) {
+                    // Both computed - prefer the one that's not minimum value
+                    if (segmentMaxs[i] == Integer.MIN_VALUE && other.segmentMaxs[i] != Integer.MIN_VALUE) {
+                        newMaxs[i] = other.segmentMaxs[i];
+                    }
+                }
+            }
+            
+            return new MaxFindingState(array, newMaxs, newComputed, segmentSize);
+        }
+        
+        /**
+         * Get the start index for a segment.
+         */
+        public int getSegmentStart(int segmentId) {
+            return segmentId * segmentSize;
+        }
+        
+        /**
+         * Get the end index (exclusive) for a segment.
+         */
+        public int getSegmentEnd(int segmentId) {
+            return Math.min((segmentId + 1) * segmentSize, array.length);
         }
         
         @Override
         public String toString() {
-            return String.format("PrefixSum{array=%s, prefix=%s, computed=%s}", 
+            return String.format("MaxFinding{array=%s, segmentMaxs=%s, computed=%s, segmentSize=%d}", 
                                Arrays.toString(array), 
-                               Arrays.toString(prefixSum), 
-                               Arrays.toString(computed));
+                               Arrays.toString(segmentMaxs), 
+                               Arrays.toString(computed),
+                               segmentSize);
         }
         
         @Override
         public boolean equals(Object obj) {
             if (this == obj) return true;
-            if (!(obj instanceof PrefixSumState)) return false;
-            PrefixSumState other = (PrefixSumState) obj;
-            return Arrays.equals(array, other.array) && 
-                   Arrays.equals(prefixSum, other.prefixSum) && 
+            if (!(obj instanceof MaxFindingState)) return false;
+            MaxFindingState other = (MaxFindingState) obj;
+            return segmentSize == other.segmentSize &&
+                   Arrays.equals(array, other.array) && 
+                   Arrays.equals(segmentMaxs, other.segmentMaxs) && 
                    Arrays.equals(computed, other.computed);
         }
     }
 
     /**
-     * Parallel prefix sum problem using LLP framework.
+     * Parallel maximum finding problem using LLP framework.
      */
-    static class PrefixSumProblem implements LLPProblem<PrefixSumState> {
+    static class MaxFindingProblem implements LLPProblem<MaxFindingState> {
         
         @Override
-        public boolean Forbidden(PrefixSumState state) {
-            // Check if any computed prefix sum is incorrect
-            for (int i = 0; i < state.array.length; i++) {
-                if (state.computed[i]) {
-                    int expectedSum = computeExpectedPrefix(state.array, i);
-                    if (state.prefixSum[i] != expectedSum) {
-                        return true; // Incorrect prefix sum
+        public boolean Forbidden(MaxFindingState state) {
+            // Check if any computed segment maximum is incorrect
+            for (int segmentId = 0; segmentId < state.segmentMaxs.length; segmentId++) {
+                if (state.computed[segmentId]) {
+                    int expectedMax = computeExpectedMax(state, segmentId);
+                    if (state.segmentMaxs[segmentId] != expectedMax) {
+                        return true; // Incorrect maximum
                     }
                 }
             }
@@ -84,16 +130,16 @@ public class SimpleLLPExample {
         }
         
         @Override
-        public PrefixSumState Ensure(PrefixSumState state) {
-            // Fix any incorrect prefix sums
-            PrefixSumState result = state;
-            for (int i = 0; i < state.array.length; i++) {
-                if (state.computed[i]) {
-                    int expectedSum = computeExpectedPrefix(state.array, i);
-                    if (state.prefixSum[i] != expectedSum) {
-                        System.out.println("    Fixing prefix[" + i + "]: " + 
-                                         state.prefixSum[i] + " → " + expectedSum);
-                        result = result.withPrefixSum(i, expectedSum);
+        public MaxFindingState Ensure(MaxFindingState state) {
+            // Fix any incorrect segment maximums
+            MaxFindingState result = state;
+            for (int segmentId = 0; segmentId < state.segmentMaxs.length; segmentId++) {
+                if (state.computed[segmentId]) {
+                    int expectedMax = computeExpectedMax(state, segmentId);
+                    if (state.segmentMaxs[segmentId] != expectedMax) {
+                        System.out.println("    Fixing segment[" + segmentId + "]: " + 
+                                         state.segmentMaxs[segmentId] + " → " + expectedMax);
+                        result = result.withSegmentMax(segmentId, expectedMax);
                     }
                 }
             }
@@ -101,62 +147,107 @@ public class SimpleLLPExample {
         }
         
         @Override
-        public PrefixSumState Advance(PrefixSumState state) {
-            // Find an element whose prefix sum can be computed
-            long threadId = Thread.currentThread().getId();
-            int startIndex = (int)(threadId % state.array.length);
-            
-            for (int offset = 0; offset < state.array.length; offset++) {
-                int i = (startIndex + offset) % state.array.length;
-                
-                if (!state.computed[i] && canCompute(state, i)) {
-                    int prefixSum;
-                    if (i == 0) {
-                        // First element: prefix[0] = array[0]
-                        prefixSum = state.array[0];
-                    } else {
-                        // Other elements: prefix[i] = prefix[i-1] + array[i]
-                        prefixSum = state.prefixSum[i-1] + state.array[i];
-                    }
+        public MaxFindingState AdvanceWithContext(MaxFindingState state, int threadId, int totalThreads) {
+            // Each thread works on specific segments - THIS IS THE KEY FOR TRUE PARALLELISM
+            for (int segmentId = threadId; segmentId < state.segmentMaxs.length; segmentId += totalThreads) {
+                if (!state.computed[segmentId]) {
+                    int max = computeSegmentMax(state, segmentId);
                     
-                    System.out.println("    Thread-" + threadId + " computing prefix[" + i + "]: " + 
-                                     (i == 0 ? state.array[i] : state.prefixSum[i-1] + " + " + state.array[i]) + 
-                                     " = " + prefixSum);
-                    return state.withPrefixSum(i, prefixSum);
+                    int start = state.getSegmentStart(segmentId);
+                    int end = state.getSegmentEnd(segmentId);
+                    System.out.println("    Thread-" + threadId + " processing segment[" + segmentId + "] " +
+                                     "elements[" + start + ".." + (end-1) + "]: " + 
+                                     getSegmentString(state, segmentId) + " → max=" + max);
+                    
+                    return state.withSegmentMax(segmentId, max);
                 }
             }
-            return state; // No progress possible
-        }
-        
-        /**
-         * Check if prefix[i] can be computed (dependencies satisfied).
-         */
-        private boolean canCompute(PrefixSumState state, int i) {
-            if (i == 0) {
-                return true; // First element can always be computed
-            }
-            return state.computed[i-1]; // Need previous prefix sum
-        }
-        
-        /**
-         * Compute expected prefix sum for validation.
-         */
-        private int computeExpectedPrefix(int[] array, int index) {
-            int sum = 0;
-            for (int i = 0; i <= index; i++) {
-                sum += array[i];
-            }
-            return sum;
+            return state; // No work available for this thread
         }
         
         @Override
-        public PrefixSumState getInitialState() {
-            return new PrefixSumState(new int[]{1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+        public MaxFindingState Advance(MaxFindingState state) {
+            // Fallback: process first uncomputed segment
+            for (int segmentId = 0; segmentId < state.segmentMaxs.length; segmentId++) {
+                if (!state.computed[segmentId]) {
+                    int max = computeSegmentMax(state, segmentId);
+                    return state.withSegmentMax(segmentId, max);
+                }
+            }
+            return state;
+        }
+        
+        /**
+         * CRITICAL: Override the merge method to properly combine parallel results.
+         */
+        @Override
+        public MaxFindingState merge(MaxFindingState state1, MaxFindingState state2) {
+            // If one state has no computed segments, return the other
+            boolean state1HasComputed = false;
+            boolean state2HasComputed = false;
+            
+            for (boolean computed : state1.computed) {
+                if (computed) { state1HasComputed = true; break; }
+            }
+            for (boolean computed : state2.computed) {
+                if (computed) { state2HasComputed = true; break; }
+            }
+            
+            if (!state1HasComputed) return state2;
+            if (!state2HasComputed) return state1;
+            
+            // Both have computed segments - merge them
+            return state1.mergeWith(state2);
+        }
+        
+        /**
+         * Compute maximum for a specific segment.
+         */
+        private int computeSegmentMax(MaxFindingState state, int segmentId) {
+            int start = state.getSegmentStart(segmentId);
+            int end = state.getSegmentEnd(segmentId);
+            int max = Integer.MIN_VALUE;
+            
+            for (int i = start; i < end; i++) {
+                if (state.array[i] > max) {
+                    max = state.array[i];
+                }
+            }
+            return max;
+        }
+        
+        /**
+         * Compute expected maximum for validation.
+         */
+        private int computeExpectedMax(MaxFindingState state, int segmentId) {
+            return computeSegmentMax(state, segmentId);
+        }
+        
+        /**
+         * Get string representation of a segment's elements.
+         */
+        private String getSegmentString(MaxFindingState state, int segmentId) {
+            int start = state.getSegmentStart(segmentId);
+            int end = state.getSegmentEnd(segmentId);
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = start; i < end; i++) {
+                if (i > start) sb.append(",");
+                sb.append(state.array[i]);
+            }
+            sb.append("]");
+            return sb.toString();
         }
         
         @Override
-        public boolean isSolution(PrefixSumState state) {
-            // All prefix sums must be computed
+        public MaxFindingState getInitialState() {
+            int[] testArray = {15, 22, 8, 31, 9, 43, 7, 54, 6, 19, 3, 28};
+            int numSegments = 4; // Will create 4 segments of 3 elements each
+            return new MaxFindingState(testArray, numSegments);
+        }
+        
+        @Override
+        public boolean isSolution(MaxFindingState state) {
+            // All segments must be computed
             for (boolean c : state.computed) {
                 if (!c) return false;
             }
@@ -165,29 +256,37 @@ public class SimpleLLPExample {
     }
     
     public static void main(String[] args) {
-        System.out.println("=== Parallel Prefix Sum Example ===\n");
+        System.out.println("=== Parallel Array Maximum Finding Example ===\n");
         
         // Problem parameters
-        int numThreads = 2;
+        int numThreads = 4;  // Match number of segments for clear demonstration
         int maxIterations = 100;
         
         // Create the problem
-        PrefixSumProblem problem = new PrefixSumProblem();
+        MaxFindingProblem problem = new MaxFindingProblem();
+        MaxFindingState initial = problem.getInitialState();
         
-        System.out.println("Problem: Compute prefix sums in parallel");
-        System.out.println("Input array: " + Arrays.toString(problem.getInitialState().array));
-        System.out.println("Expected output: [1, 3, 6, 10, 15, 21, 28, 36, 45, 55]");
-        System.out.println("Initial state: " + problem.getInitialState());
+        System.out.println("Problem: Find maximum in each array segment using parallel processing");
+        System.out.println("Input array: " + Arrays.toString(initial.array));
+        System.out.println("Segments (" + initial.segmentMaxs.length + "):");
+        for (int i = 0; i < initial.segmentMaxs.length; i++) {
+            int start = initial.getSegmentStart(i);
+            int end = initial.getSegmentEnd(i);
+            int[] segment = Arrays.copyOfRange(initial.array, start, end);
+            System.out.println("  Segment " + i + ": " + Arrays.toString(segment));
+        }
+        System.out.println("Expected maximums: [22, 43, 54, 28]");
+        System.out.println("Initial state: " + initial);
         System.out.println("Threads: " + numThreads);
         
         // Solve using the LLP framework
         solveProblem(problem, numThreads, maxIterations);
     }
 
-    private static void solveProblem(PrefixSumProblem problem, int numThreads, int maxIterations) {
+    private static void solveProblem(MaxFindingProblem problem, int numThreads, int maxIterations) {
         System.out.println("\n--- Framework Solution ---");
         
-        LLPSolver<PrefixSumState> solver = null;
+        LLPSolver<MaxFindingState> solver = null;
         
         try {
             solver = new LLPSolver<>(problem, numThreads, maxIterations);
@@ -195,20 +294,20 @@ public class SimpleLLPExample {
             System.out.println("Solving with LLP framework...");
             
             long startTime = System.currentTimeMillis();
-            PrefixSumState solution = solver.solve();
+            MaxFindingState solution = solver.solve();
             long endTime = System.currentTimeMillis();
             
             System.out.println("\n✓ Solution found!");
-            System.out.println("Input array:  " + Arrays.toString(solution.array));
-            System.out.println("Prefix sums:  " + Arrays.toString(solution.prefixSum));
-            System.out.println("Computed:     " + Arrays.toString(solution.computed));
+            System.out.println("Input array:      " + Arrays.toString(solution.array));
+            System.out.println("Segment maximums: " + Arrays.toString(solution.segmentMaxs));
+            System.out.println("Computed:         " + Arrays.toString(solution.computed));
             System.out.println("Execution time: " + (endTime - startTime) + "ms");
             System.out.println("Is valid solution? " + problem.isSolution(solution));
             System.out.println("Is forbidden? " + problem.Forbidden(solution));
             
             // Verify correctness
-            int[] expected = {1, 3, 6, 10, 15, 21, 28, 36, 45, 55};
-            boolean correct = Arrays.equals(solution.prefixSum, expected);
+            int[] expected = {22, 43, 54, 28};
+            boolean correct = Arrays.equals(solution.segmentMaxs, expected);
             System.out.println("Correct result? " + correct);
             
             // Get statistics

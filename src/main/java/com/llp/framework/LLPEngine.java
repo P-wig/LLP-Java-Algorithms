@@ -46,7 +46,7 @@ public class LLPEngine<T> {
                 T afterEnsure = IntStream.range(0, parallelism)
                     .parallel()
                     .mapToObj(i -> problem.Ensure(current))
-                    .reduce(current, this::mergeStates);
+                    .reduce(current, problem::merge);  // USE PROBLEM'S MERGE METHOD
                 currentState.set(afterEnsure);
                 
                 System.out.println("  Iteration " + iterationCount + ": Fixed forbidden state");
@@ -59,7 +59,7 @@ public class LLPEngine<T> {
                         // Each thread works on different part
                         return problem.AdvanceWithContext(current, threadId, parallelism);
                     })
-                    .reduce(current, this::mergeStates);
+                    .reduce(current, problem::merge);  // USE PROBLEM'S MERGE METHOD
                 currentState.set(afterAdvance);
                 
                 // Check if Advance created violations and fix them
@@ -68,7 +68,7 @@ public class LLPEngine<T> {
                     T afterEnsure = IntStream.range(0, parallelism)
                         .parallel()
                         .mapToObj(i -> problem.Ensure(advanced))
-                        .reduce(advanced, this::mergeStates);
+                        .reduce(advanced, problem::merge);  // USE PROBLEM'S MERGE METHOD
                     currentState.set(afterEnsure);
                     
                     System.out.println("  Iteration " + iterationCount + ": Advanced then fixed violation");
@@ -100,21 +100,6 @@ public class LLPEngine<T> {
         }
         
         return currentState.get();
-    }
-    
-    /**
-     * Merge states from parallel operations - prefers valid states.
-     */
-    private T mergeStates(T state1, T state2) {
-        // Prefer non-forbidden states
-        if (problem.Forbidden(state1) && !problem.Forbidden(state2)) {
-            return state2;
-        }
-        if (!problem.Forbidden(state1) && problem.Forbidden(state2)) {
-            return state1;
-        }
-        // Both same status - return second (arbitrary choice)
-        return state2;
     }
     
     // Getters for statistics
