@@ -45,7 +45,7 @@ public class LLPEngine<T> {
                 // Fix violations with parallel Ensure
                 T afterEnsure = IntStream.range(0, parallelism)
                     .parallel()
-                    .mapToObj(i -> problem.Ensure(current))
+                    .mapToObj(threadId -> problem.EnsureWithContext(current, threadId, parallelism))
                     .reduce(current, problem::merge);  // USE PROBLEM'S MERGE METHOD
                 currentState.set(afterEnsure);
                 
