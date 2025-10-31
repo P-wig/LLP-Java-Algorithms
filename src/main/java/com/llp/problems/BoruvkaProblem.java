@@ -1,151 +1,533 @@
 package com.llp.problems;
 
 import com.llp.algorithm.LLPProblem;
+import com.llp.algorithm.LLPSolver;
+
+import java.util.*;
 
 /**
  * Boruvka's Minimum Spanning Tree Algorithm using the LLP framework.
  * 
- * <h3>Problem Description:</h3>
- * Boruvka's algorithm finds a minimum spanning tree (or forest for disconnected graphs)
- * of an undirected edge-weighted graph. It works by repeatedly finding the minimum-weight
- * edge leaving each component and adding all such edges to the spanning tree in parallel.
+ * Problem Description:
+ * Boruvka's algorithm finds a minimum spanning tree by repeatedly finding
+ * the minimum-weight edge leaving each component and adding all such edges.
  * 
- * <h3>Algorithm Overview:</h3>
- * <ol>
- *   <li>Start with each vertex as its own component</li>
- *   <li>For each component, find the minimum-weight edge leaving it</li>
- *   <li>Add all such edges to the spanning tree</li>
- *   <li>Merge components connected by added edges</li>
- *   <li>Repeat until one component remains (or no more edges can be added)</li>
- * </ol>
- * 
- * <h3>State Representation:</h3>
- * TODO: Define a state class that represents:
- * <ul>
- *   <li>The graph structure (edge list with weights)</li>
- *   <li>Current forest (set of edges in the MST so far)</li>
- *   <li>Component labels for each vertex</li>
- *   <li>Minimum outgoing edge for each component</li>
- * </ul>
- * 
- * <h3>Implementation Guide:</h3>
- * <ul>
- *   <li><b>Forbidden(state):</b> Check if the forest contains cycles or invalid edges.
- *       A state is forbidden if:
- *       - The forest contains a cycle
- *       - An edge in the forest connects vertices in the same component
- *       - The total weight exceeds the minimum possible</li>
- *   
- *   <li><b>Ensure(state):</b> Remove cycles or fix invalid edges.
- *       If a cycle is detected, remove the heaviest edge in the cycle.
- *       If an edge connects vertices in the same component, remove it.
- *       Ensure component labels are consistent with the forest structure.</li>
- *   
- *   <li><b>Advance(state):</b> Add minimum-weight edges from each component.
- *       For each component C:
- *       - Find the minimum-weight edge (u, v) where u ∈ C and v ∉ C
- *       - Add this edge to the forest
- *       - Merge the components containing u and v
- *       Can be done in parallel for all components.</li>
- * </ul>
- * 
- * <h3>Example Usage:</h3>
- * <pre>{@code
- * // Graph edges with weights: (u, v, weight)
- * Edge[] edges = {
- *     new Edge(0, 1, 4),
- *     new Edge(0, 2, 3),
- *     new Edge(1, 2, 1),
- *     new Edge(1, 3, 2),
- *     new Edge(2, 3, 5)
- * };
- * BoruvkaProblem problem = new BoruvkaProblem(4, edges);
- * LLPSolver<BoruvkaState> solver = new LLPSolver<>(problem);
- * BoruvkaState solution = solver.solve();
- * }</pre>
- * 
- * @see <a href="https://en.wikipedia.org/wiki/Bor%C5%AFvka%27s_algorithm">Boruvka's Algorithm</a>
+ * LLP Implementation Strategy:
+ * - State: Component labels and MST edges
+ * - Forbidden: Forest contains cycles
+ * - Advance: Add minimum outgoing edges from each component
+ * - Ensure: Remove cycles by removing heaviest edge
+ * - Parallelism: Multiple components processed simultaneously
  */
-public class BoruvkaProblem implements LLPProblem<Object> {
-    
-    // TODO: Add fields for problem instance data (edges with weights, number of vertices)
+public class BoruvkaProblem {
     
     /**
-     * TODO: Add constructor to initialize problem with graph data
+     * Represents an undirected weighted edge.
      */
-    
-    @Override
-    public boolean Forbidden(Object state) {
-        // TODO: Implement constraint checking
-        // Check if the forest contains cycles or invalid edges
-        //
-        // A state is forbidden if:
-        // 1. The forest contains a cycle (detected using DFS or union-find)
-        // 2. An edge in the forest connects two vertices with the same component label
-        // 3. The number of edges exceeds n-1 (for connected graph) or n-k (for k components)
-        //
-        // Return true if any constraint is violated
-        throw new UnsupportedOperationException("TODO: Implement Forbidden() - check for cycles and invalid edges");
+    static class Edge {
+        final int u, v;
+        final double weight;
+        
+        public Edge(int u, int v, double weight) {
+            this.u = u;
+            this.v = v;
+            this.weight = weight;
+        }
+        
+        @Override
+        public String toString() {
+            return String.format("(%d-%d:%.1f)", u, v, weight);
+        }
+        
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof Edge)) return false;
+            Edge other = (Edge) obj;
+            return weight == other.weight && 
+                   ((u == other.u && v == other.v) || (u == other.v && v == other.u));
+        }
+        
+        @Override
+        public int hashCode() {
+            return Objects.hash(Math.min(u, v), Math.max(u, v), weight);
+        }
+    }
+
+    /**
+     * Simplified state for Boruvka's algorithm.
+     */
+    static class BoruvkaState {
+        final Edge[] allEdges;        // All graph edges
+        final Set<Edge> mstEdges;     // Current MST edges
+        final int[] component;        // Component label for each vertex
+        final int numVertices;
+        
+        public BoruvkaState(int numVertices, Edge[] allEdges) {
+            this.numVertices = numVertices;
+            this.allEdges = allEdges.clone();
+            this.mstEdges = new HashSet<>();
+            this.component = new int[numVertices];
+            
+            // Each vertex starts in its own component
+            for (int i = 0; i < numVertices; i++) {
+                component[i] = i;
+            }
+        }
+        
+        public BoruvkaState(Edge[] allEdges, Set<Edge> mstEdges, int[] component, int numVertices) {
+            this.allEdges = allEdges.clone();
+            this.mstEdges = new HashSet<>(mstEdges);
+            this.component = component.clone();
+            this.numVertices = numVertices;
+        }
+        
+        public BoruvkaState withAddedEdge(Edge edge) {
+            Set<Edge> newMstEdges = new HashSet<>(mstEdges);
+            newMstEdges.add(edge);
+            
+            // Merge components
+            int[] newComponent = component.clone();
+            int compU = component[edge.u];
+            int compV = component[edge.v];
+            int minComp = Math.min(compU, compV);
+            int maxComp = Math.max(compU, compV);
+            
+            // Relabel larger component to smaller
+            for (int i = 0; i < numVertices; i++) {
+                if (newComponent[i] == maxComp) {
+                    newComponent[i] = minComp;
+                }
+            }
+            
+            return new BoruvkaState(allEdges, newMstEdges, newComponent, numVertices);
+        }
+        
+        public BoruvkaState withoutEdge(Edge edge) {
+            Set<Edge> newMstEdges = new HashSet<>(mstEdges);
+            newMstEdges.remove(edge);
+            
+            // Recalculate components after edge removal
+            int[] newComponent = recalculateComponents(newMstEdges);
+            return new BoruvkaState(allEdges, newMstEdges, newComponent, numVertices);
+        }
+        
+        public BoruvkaState mergeWith(BoruvkaState other) {
+            Set<Edge> newMstEdges = new HashSet<>(mstEdges);
+            newMstEdges.addAll(other.mstEdges);
+            
+            int[] newComponent = recalculateComponents(newMstEdges);
+            return new BoruvkaState(allEdges, newMstEdges, newComponent, numVertices);
+        }
+        
+        public int[] recalculateComponents(Set<Edge> edges) {
+            int[] comp = new int[numVertices];
+            for (int i = 0; i < numVertices; i++) {
+                comp[i] = i;
+            }
+            
+            // Simple Union-Find
+            for (Edge edge : edges) {
+                int rootU = findRoot(comp, edge.u);
+                int rootV = findRoot(comp, edge.v);
+                if (rootU != rootV) {
+                    comp[Math.max(rootU, rootV)] = Math.min(rootU, rootV);
+                }
+            }
+            
+            // Flatten paths
+            for (int i = 0; i < numVertices; i++) {
+                comp[i] = findRoot(comp, i);
+            }
+            
+            return comp;
+        }
+        
+        public int findRoot(int[] comp, int v) {
+            while (comp[v] != v) {
+                v = comp[v];
+            }
+            return v;
+        }
+        
+        public int getNumComponents() {
+            Set<Integer> unique = new HashSet<>();
+            for (int c : component) {
+                unique.add(c);
+            }
+            return unique.size();
+        }
+        
+        @Override
+        public String toString() {
+            return String.format("Boruvka{vertices=%d, components=%d, mstEdges=%d}", 
+                               numVertices, getNumComponents(), mstEdges.size());
+        }
+        
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof BoruvkaState)) return false;
+            BoruvkaState other = (BoruvkaState) obj;
+            return Arrays.equals(component, other.component) && mstEdges.equals(other.mstEdges);
+        }
+    }
+
+    /**
+     * Simplified Boruvka LLP implementation.
+     */
+    static class BoruvkaLLPProblem implements LLPProblem<BoruvkaState> {
+        
+        private final int numVertices;
+        private final Edge[] allEdges;
+        
+        public BoruvkaLLPProblem(int numVertices, Edge[] allEdges) {
+            this.numVertices = numVertices;
+            this.allEdges = allEdges.clone();
+        }
+        
+        @Override
+        public boolean Forbidden(BoruvkaState state) {
+            // Simple and efficient: a forest with n vertices can have at most n-1 edges
+            if (state.mstEdges.size() >= state.numVertices) {
+                return true; // Too many edges - must have a cycle
+            }
+            
+            // Use Union-Find to detect cycles without modifying the state
+            int[] parent = new int[state.numVertices];
+            for (int i = 0; i < state.numVertices; i++) {
+                parent[i] = i;
+            }
+            
+            for (Edge edge : state.mstEdges) {
+                int rootU = findRootWithPathCompression(parent, edge.u);
+                int rootV = findRootWithPathCompression(parent, edge.v);
+                
+                if (rootU == rootV) {
+                    return true; // Cycle detected - both endpoints in same component
+                }
+                
+                // Union the components
+                parent[rootV] = rootU;
+            }
+            
+            return false;
+        }
+        
+        // Add this helper method to avoid conflicts with existing findRoot
+        private int findRootWithPathCompression(int[] parent, int v) {
+            if (parent[v] != v) {
+                parent[v] = findRootWithPathCompression(parent, parent[v]); // Path compression
+            }
+            return parent[v];
+        }
+        
+        @Override
+        public BoruvkaState Ensure(BoruvkaState state) {
+            // Remove heaviest edge that creates cycle
+            List<Edge> invalidEdges = new ArrayList<>();
+            for (Edge edge : state.mstEdges) {
+                if (state.component[edge.u] == state.component[edge.v]) {
+                    invalidEdges.add(edge);
+                }
+            }
+            
+            if (!invalidEdges.isEmpty()) {
+                Edge heaviest = invalidEdges.stream()
+                    .max(Comparator.comparingDouble(e -> e.weight))
+                    .orElse(null);
+                System.out.println("    Removing cycle edge " + heaviest);
+                return state.withoutEdge(heaviest);
+            }
+            
+            return state;
+        }
+        
+        @Override
+        public BoruvkaState Advance(BoruvkaState state) {
+            // Find all minimum outgoing edges for all components
+            Map<Integer, Edge> componentMinEdges = new HashMap<>();
+            
+            Set<Integer> components = new HashSet<>();
+            for (int i = 0; i < state.numVertices; i++) {
+                components.add(state.component[i]);
+            }
+            
+            // Find minimum edge for each component
+            for (int comp : components) {
+                Edge minEdge = findMinOutgoingEdge(state, comp);
+                if (minEdge != null) {
+                    componentMinEdges.put(comp, minEdge);
+                }
+            }
+            
+            // Add all minimum edges, but avoid duplicates
+            BoruvkaState result = state;
+            Set<Edge> edgesToAdd = new HashSet<>();
+            
+            for (Edge edge : componentMinEdges.values()) {
+                if (!result.mstEdges.contains(edge)) {
+                    edgesToAdd.add(edge);
+                }
+            }
+            
+            // Add edges one by one (proper Boruvka step)
+            for (Edge edge : edgesToAdd) {
+                // Check if edge still connects different components after previous additions
+                if (result.component[edge.u] != result.component[edge.v]) {
+                    result = result.withAddedEdge(edge);
+                    System.out.println("    Added MST edge: " + edge);
+                }
+            }
+            
+            return result;
+        }
+        
+        @Override
+        public BoruvkaState AdvanceWithContext(BoruvkaState state, int threadId, int totalThreads) {
+            // Find minimum edges for components assigned to this thread
+            Set<Integer> components = new HashSet<>();
+            for (int i = 0; i < state.numVertices; i++) {
+                components.add(state.component[i]);
+            }
+            
+            List<Integer> compList = new ArrayList<>(components);
+            BoruvkaState result = state;
+            
+            // Each thread handles specific components
+            for (int i = threadId; i < compList.size(); i += totalThreads) {
+                int comp = compList.get(i);
+                Edge minEdge = findMinOutgoingEdge(state, comp);
+                
+                if (minEdge != null && !result.mstEdges.contains(minEdge)) {
+                    // Only add if it still connects different components
+                    if (result.component[minEdge.u] != result.component[minEdge.v]) {
+                        result = result.withAddedEdge(minEdge);
+                        System.out.println("    Thread-" + threadId + " added edge for component " + comp + ": " + minEdge);
+                    }
+                }
+            }
+            
+            return result;
+        }
+        
+        @Override
+        public BoruvkaState EnsureWithContext(BoruvkaState state, int threadId, int totalThreads) {
+            // Simple fallback to basic Ensure for now
+            return Ensure(state);
+        }
+        
+        @Override
+        public BoruvkaState getInitialState() {
+            return new BoruvkaState(numVertices, allEdges);
+        }
+        
+        @Override
+        public boolean isSolution(BoruvkaState state) {
+            if (Forbidden(state)) return false;
+            
+            // Check if we have optimal number of edges and no more outgoing edges
+            int expectedEdges = state.numVertices - state.getNumComponents();
+            if (state.mstEdges.size() != expectedEdges) return false;
+            
+            // Check if any component has outgoing edges
+            Set<Integer> components = new HashSet<>();
+            for (int i = 0; i < state.numVertices; i++) {
+                components.add(state.component[i]);
+            }
+            
+            for (int comp : components) {
+                if (findMinOutgoingEdge(state, comp) != null) {
+                    return false; // Still have edges to add
+                }
+            }
+            
+            return true;
+        }
+        
+        @Override
+        public BoruvkaState merge(BoruvkaState state1, BoruvkaState state2) {
+            // Take the union of MST edges
+            Set<Edge> allEdges = new HashSet<>(state1.mstEdges);
+            allEdges.addAll(state2.mstEdges);
+            
+            // If no new edges, return state1
+            if (allEdges.equals(state1.mstEdges)) {
+                return state1;
+            }
+            
+            // Create new state with merged edges and recalculated components
+            BoruvkaState merged = new BoruvkaState(state1.allEdges, allEdges, new int[state1.numVertices], state1.numVertices);
+            int[] newComponents = merged.recalculateComponents(allEdges);
+            
+            return new BoruvkaState(merged.allEdges, merged.mstEdges, newComponents, merged.numVertices);
+        }
+        
+        private Edge findMinOutgoingEdge(BoruvkaState state, int comp) {
+            Edge minEdge = null;
+            double minWeight = Double.POSITIVE_INFINITY;
+            
+            for (Edge edge : state.allEdges) {
+                boolean uInComp = state.component[edge.u] == comp;
+                boolean vInComp = state.component[edge.v] == comp;
+                
+                if (uInComp ^ vInComp) { // One in component, one out
+                    if (edge.weight < minWeight) {
+                        minWeight = edge.weight;
+                        minEdge = edge;
+                    }
+                }
+            }
+            
+            return minEdge;
+        }
     }
     
-    @Override
-    public Object Ensure(Object state) {
-        // TODO: Implement constraint fixing
-        // Remove cycles or fix invalid edges
-        //
-        // If a cycle exists:
-        //   Find the heaviest edge in the cycle and remove it
-        //
-        // If an edge connects vertices in the same component:
-        //   Remove that edge from the forest
-        //
-        // Update component labels to reflect the current forest structure
-        // Return the updated state without cycles
-        throw new UnsupportedOperationException("TODO: Implement Ensure() - remove cycles and fix labels");
+    public static void main(String[] args) {
+        System.out.println("=== Boruvka's Minimum Spanning Tree Example ===\n");
+        
+        // Larger test graph with 10 vertices and 20 edges
+        Edge[] edges = {
+            // Core connections (forms a spanning tree)
+            new Edge(0, 1, 2.0),
+            new Edge(1, 2, 3.0),
+            new Edge(2, 3, 1.0),
+            new Edge(3, 4, 4.0),
+            new Edge(4, 5, 2.0),
+            new Edge(5, 6, 3.0),
+            new Edge(6, 7, 1.0),
+            new Edge(7, 8, 5.0),
+            new Edge(8, 9, 2.0),
+            
+            // Additional edges (some may be cheaper alternatives)
+            new Edge(0, 3, 6.0),
+            new Edge(1, 4, 7.0),
+            new Edge(2, 5, 4.0),
+            new Edge(3, 6, 5.0),
+            new Edge(4, 7, 3.0),
+            new Edge(5, 8, 6.0),
+            new Edge(6, 9, 4.0),
+            
+            // Cross connections
+            new Edge(0, 5, 8.0),
+            new Edge(1, 6, 9.0),
+            new Edge(2, 7, 7.0),
+            new Edge(3, 8, 8.0),
+            new Edge(4, 9, 6.0)
+        };
+
+        int numVertices = 10;
+        int numThreads = 4; // More threads for larger graph
+        int maxIterations = 100;
+        
+        BoruvkaLLPProblem problem = new BoruvkaLLPProblem(numVertices, edges);
+        BoruvkaState initial = problem.getInitialState();
+        
+        System.out.println("Problem: Find minimum spanning tree");
+        System.out.println("Graph: " + numVertices + " vertices, " + edges.length + " edges");
+        System.out.println("Graph edges:");
+        for (Edge edge : edges) {
+            System.out.println("  " + edge);
+        }
+        System.out.println("\nExpected MST should have " + (numVertices - 1) + " edges");
+        System.out.println("Initial state: " + initial);
+        System.out.println("Threads: " + numThreads);
+        
+        // Solve using the LLP framework
+        solveProblem(problem, numThreads, maxIterations);
+        
+        // Also test with different thread counts
+        System.out.println("\n=== Performance Comparison ===");
+        testPerformance(problem, numVertices, edges);
     }
-    
-    @Override
-    public Object Advance(Object state) {
-        // TODO: Implement progress logic
-        // Add minimum-weight edges from each component
-        //
-        // For each component C (can be done in parallel):
-        //   Find minimum-weight edge (u, v) where:
-        //     u is in component C
-        //     v is NOT in component C
-        //   Add this edge to the forest
-        //   Merge components of u and v
-        //
-        // This is the core Boruvka step
-        // Return the advanced state with new edges added
-        throw new UnsupportedOperationException("TODO: Implement Advance() - add minimum outgoing edges");
+
+    private static void solveProblem(BoruvkaLLPProblem problem, int numThreads, int maxIterations) {
+        System.out.println("\n--- Framework Solution ---");
+        
+        LLPSolver<BoruvkaState> solver = null;
+        
+        try {
+            solver = new LLPSolver<>(problem, numThreads, maxIterations);
+            
+            System.out.println("Solving with LLP framework...");
+            
+            long startTime = System.currentTimeMillis();
+            BoruvkaState solution = solver.solve();
+            long endTime = System.currentTimeMillis();
+            
+            System.out.println("\n✓ Solution found!");
+            System.out.println("MST edges:");
+            double totalWeight = 0.0;
+            for (Edge edge : solution.mstEdges) {
+                System.out.println("  " + edge);
+                totalWeight += edge.weight;
+            }
+            System.out.println("Total MST weight: " + totalWeight);
+            System.out.println("Number of components: " + solution.getNumComponents());
+            System.out.println("Execution time: " + (endTime - startTime) + "ms");
+            System.out.println("Is valid solution? " + problem.isSolution(solution));
+            System.out.println("Is forbidden? " + problem.Forbidden(solution));
+            
+            // Get statistics
+            LLPSolver.ExecutionStats stats = solver.getExecutionStats();
+            if (stats != null) {
+                System.out.println("Total iterations: " + stats.getIterationCount());
+                System.out.println("Converged: " + stats.hasConverged());
+            }
+            
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            e.printStackTrace();
+        } finally {
+            if (solver != null) {
+                solver.shutdown();
+            }
+        }
+        
+        System.out.println("\n=== Example Complete ===");
     }
-    
-    @Override
-    public Object getInitialState() {
-        // TODO: Implement initial state creation
-        // Return the starting state for the algorithm
-        // Initial state should have:
-        //   Each vertex in its own component (label[i] = i)
-        //   Empty forest (no edges selected yet)
-        //   All graph edges available for selection
-        //
-        // Example: return new BoruvkaState(numVertices, edges);
-        throw new UnsupportedOperationException("TODO: Implement getInitialState() - each vertex in own component");
-    }
-    
-    @Override
-    public boolean isSolution(Object state) {
-        // TODO: Implement solution checking
-        // Check if we have a minimum spanning tree/forest
-        //
-        // A state is a solution if:
-        // 1. No forbidden configurations exist (!Forbidden(state))
-        // 2. The forest is maximal (no more edges can be added without creating cycles)
-        // 3. For connected graph: exactly n-1 edges and one component
-        // 4. For disconnected graph: minimal number of edges for the forest
-        //
-        // Return true if we have a valid MST/MSF
-        throw new UnsupportedOperationException("TODO: Implement isSolution() - check if MST/MSF is complete");
+
+    /**
+     * Additional testing cases for performance comparison. Use in presentation
+     * @param problem is the BoruvkaLLPProblem instance
+     * @param numVertices is the number of vertices in the graph
+     * @param edges is the array of edges in the graph
+     */
+    private static void testPerformance(BoruvkaLLPProblem problem, int numVertices, Edge[] edges) {
+        int[] threadCounts = {1, 2, 4, 8};
+        int maxIterations = 100;
+        
+        for (int threads : threadCounts) {
+            System.out.println("\n--- Testing with " + threads + " thread(s) ---");
+            
+            LLPSolver<BoruvkaState> solver = null;
+            try {
+                solver = new LLPSolver<>(problem, threads, maxIterations);
+                
+                long startTime = System.nanoTime();
+                BoruvkaState solution = solver.solve();
+                long endTime = System.nanoTime();
+                
+                double totalWeight = solution.mstEdges.stream()
+                    .mapToDouble(edge -> edge.weight)
+                    .sum();
+                
+                LLPSolver.ExecutionStats stats = solver.getExecutionStats();
+                
+                System.out.printf("Threads: %d | Time: %.2fms | Weight: %.1f | Edges: %d | Iterations: %d | Valid: %s%n",
+                    threads,
+                    (endTime - startTime) / 1_000_000.0,
+                    totalWeight,
+                    solution.mstEdges.size(),
+                    stats != null ? stats.getIterationCount() : -1,
+                    problem.isSolution(solution)
+                );
+                
+            } catch (Exception e) {
+                System.err.println("Error with " + threads + " threads: " + e.getMessage());
+            } finally {
+                if (solver != null) {
+                    solver.shutdown();
+                }
+            }
+        }
     }
 }
