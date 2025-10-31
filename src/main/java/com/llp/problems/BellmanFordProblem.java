@@ -8,19 +8,17 @@ import java.util.Arrays;
 /**
  * Bellman-Ford Single-Source Shortest Path Algorithm using the LLP framework.
  * 
- * <h3>Problem Description:</h3>
+ * Problem Description:
  * The Bellman-Ford algorithm finds shortest paths from a source vertex to all
  * other vertices in a weighted directed graph. It can handle negative edge weights
  * (unlike Dijkstra's algorithm) but the graph must not contain negative cycles.
  * 
- * <h3>LLP Implementation Strategy:</h3>
- * <ul>
- *   <li><b>State:</b> Distance estimates from source to each vertex</li>
- *   <li><b>Forbidden:</b> Distance estimates that violate triangle inequality</li>
- *   <li><b>Advance:</b> Relax edges to improve distance estimates</li>
- *   <li><b>Ensure:</b> Fix triangle inequality violations</li>
- *   <li><b>Parallelism:</b> Multiple edges can be relaxed simultaneously</li>
- * </ul>
+ * LLP Implementation Strategy:
+ * - State: Distance estimates from source to each vertex
+ * - Forbidden: Distance estimates that violate triangle inequality
+ * - Advance: Relax edges to improve distance estimates
+ * - Ensure: Fix triangle inequality violations
+ * - Parallelism: Multiple edges can be relaxed simultaneously
  */
 public class BellmanFordProblem {
     
