@@ -179,7 +179,7 @@ public class BellmanFordProblem {
                     double newDistance = state.distances[edge.from] + edge.weight;
                     if (state.distances[edge.to] > newDistance + EPSILON) {
                         System.out.println("    Fixing vertex " + edge.to + ": " + 
-                                         state.distances[edge.to] + " → " + newDistance + 
+                                         state.distances[edge.to] + " -> " + newDistance + 
                                          " via edge " + edge);
                         result = result.withDistance(edge.to, newDistance);
                     }
@@ -202,7 +202,7 @@ public class BellmanFordProblem {
                     double newDistance = state.distances[edge.from] + edge.weight;
                     if (newDistance < state.distances[edge.to] - EPSILON) {
                         System.out.println("    Thread-" + threadId + " relaxing edge " + edge + 
-                                         ": " + state.distances[edge.to] + " → " + newDistance);
+                                         ": " + state.distances[edge.to] + " -> " + newDistance);
                         updatedVertices.add(edge.to);
                         updatedDistances.add(newDistance);
                     }
@@ -281,7 +281,7 @@ public class BellmanFordProblem {
                     double newDistance = state.distances[edge.from] + edge.weight;
                     if (state.distances[edge.to] > newDistance + EPSILON) {
                         System.out.println("    Thread-" + threadId + " fixing vertex " + edge.to + ": " + 
-                                         state.distances[edge.to] + " → " + newDistance + 
+                                         state.distances[edge.to] + " -> " + newDistance + 
                                          " via edge " + edge);
                         updatedVertices.add(edge.to);
                         updatedDistances.add(newDistance);

@@ -188,16 +188,6 @@ public interface LLPProblem<T> {
     }
 
     /**
-     * Stream-based parallel advance operation.
-     */
-    default T parallelAdvance(T state, int parallelism) {
-        return java.util.stream.IntStream.range(0, parallelism)
-            .parallel()
-            .mapToObj(i -> Advance(state))
-            .reduce(state, this::merge);
-    }
-
-    /**
      * Advance with context for thread-specific operations.
      * Default implementation just calls Advance(state).
      */
