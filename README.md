@@ -1,6 +1,6 @@
 # LLP-Java-Algorithms
 
-A simplified Java framework for implementing parallel LLP (Least Lattice Predicate) algorithms using Java Streams to solve various computational problems.
+A simplified Java framework for implementing parallel LLP (Lattice-Linear Predicate) algorithms using Java Streams to solve various computational problems.
 
 ## Overview
 
