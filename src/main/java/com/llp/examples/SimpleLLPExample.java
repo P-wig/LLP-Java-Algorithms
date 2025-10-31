@@ -111,7 +111,7 @@ public class SimpleLLPExample {
     }
 
     /**
-     * Parallel maximum finding problem using LLP framework.
+     * Parallel maximum finding problem using unified LLP framework.
      */
     static class MaxFindingProblem implements LLPProblem<MaxFindingState> {
         
@@ -130,14 +130,16 @@ public class SimpleLLPExample {
         }
         
         @Override
-        public MaxFindingState Ensure(MaxFindingState state) {
-            // Fix any incorrect segment maximums
+        public MaxFindingState Ensure(MaxFindingState state, int threadId, int totalThreads) {
+            // Each thread fixes specific segments using unified interface
             MaxFindingState result = state;
-            for (int segmentId = 0; segmentId < state.segmentMaxs.length; segmentId++) {
+            
+            // Distribute segments among threads using modulo arithmetic
+            for (int segmentId = threadId; segmentId < state.segmentMaxs.length; segmentId += totalThreads) {
                 if (state.computed[segmentId]) {
                     int expectedMax = computeExpectedMax(state, segmentId);
                     if (state.segmentMaxs[segmentId] != expectedMax) {
-                        System.out.println("    Fixing segment[" + segmentId + "]: " + 
+                        System.out.println("    Thread-" + threadId + " fixing segment[" + segmentId + "]: " + 
                                          state.segmentMaxs[segmentId] + " → " + expectedMax);
                         result = result.withSegmentMax(segmentId, expectedMax);
                     }
@@ -147,8 +149,13 @@ public class SimpleLLPExample {
         }
         
         @Override
-        public MaxFindingState AdvanceWithContext(MaxFindingState state, int threadId, int totalThreads) {
-            // Each thread works on specific segments - THIS IS THE KEY FOR TRUE PARALLELISM
+        public MaxFindingState Advance(MaxFindingState state, int threadId, int totalThreads) {
+            // Each thread works on specific segments - TRUE PARALLELISM using unified interface
+            // Distribute segments among threads using modulo arithmetic
+            // Thread 0 gets: 0, 4, 8...
+            // Thread 1 gets: 1, 5, 9...
+            // Thread 2 gets: 2, 6, 10...
+            // Thread 3 gets: 3, 7, 11...
             for (int segmentId = threadId; segmentId < state.segmentMaxs.length; segmentId += totalThreads) {
                 if (!state.computed[segmentId]) {
                     int max = computeSegmentMax(state, segmentId);
@@ -165,21 +172,6 @@ public class SimpleLLPExample {
             return state; // No work available for this thread
         }
         
-        @Override
-        public MaxFindingState Advance(MaxFindingState state) {
-            // Fallback: process first uncomputed segment
-            for (int segmentId = 0; segmentId < state.segmentMaxs.length; segmentId++) {
-                if (!state.computed[segmentId]) {
-                    int max = computeSegmentMax(state, segmentId);
-                    return state.withSegmentMax(segmentId, max);
-                }
-            }
-            return state;
-        }
-        
-        /**
-         * CRITICAL: Override the merge method to properly combine parallel results.
-         */
         @Override
         public MaxFindingState merge(MaxFindingState state1, MaxFindingState state2) {
             // If one state has no computed segments, return the other

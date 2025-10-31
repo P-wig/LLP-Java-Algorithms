@@ -11,7 +11,8 @@ package com.llp.algorithm;
  * </ul>
  * 
  * <p>The framework executes these operations in parallel across multiple threads,
- * synchronizing between phases to ensure correctness while maximizing parallelism.
+ * with each thread working on a subset of the problem space. For single-threaded
+ * execution, simply call with threadId=0 and totalThreads=1.
  * 
  * <h3>Implementation Guidelines:</h3>
  * 
@@ -23,21 +24,32 @@ package com.llp.algorithm;
  *   <li>Returns true only when constraints are violated</li>
  * </ul>
  * 
- * <h4>Ensure(state)</h4>
+ * <h4>Ensure(state, threadId, totalThreads)</h4>
  * <ul>
- *   <li>Must fix all violations detected by Forbidden</li>
+ *   <li>Must fix violations detected by Forbidden for this thread's partition</li>
  *   <li>Should maintain monotonic progress in the lattice</li>
  *   <li>Must be idempotent when no violations exist</li>
- *   <li>May need to propagate fixes to related state elements</li>
+ *   <li>Each thread works on a subset of the problem space</li>
  * </ul>
  * 
- * <h4>Advance(state)</h4>
+ * <h4>Advance(state, threadId, totalThreads)</h4>
  * <ul>
- *   <li>Should make clear progress toward the solution</li>
+ *   <li>Should make progress toward the solution for this thread's partition</li>
  *   <li>It's OK to create forbidden states (Ensure will fix them)</li>
  *   <li>Must eventually lead to convergence</li>
- *   <li>Should explore the solution space efficiently</li>
+ *   <li>Each thread processes a subset of the work</li>
  * </ul>
+ * 
+ * <h3>Thread Distribution Pattern:</h3>
+ * <pre>{@code
+ * // Distribute work among threads using modulo arithmetic
+ * for (int i = threadId; i < workItems.length; i += totalThreads) {
+ *     // Process workItems[i] in this thread
+ *     // Thread 0 gets: 0, 3, 6, 9...
+ *     // Thread 1 gets: 1, 4, 7, 10...
+ *     // Thread 2 gets: 2, 5, 8, 11...
+ * }
+ * }</pre>
  * 
  * <h3>Example Implementation Pattern:</h3>
  * <pre>{@code
@@ -50,18 +62,21 @@ package com.llp.algorithm;
  *     }
  *     
  *     @Override
- *     public MyState Ensure(MyState state) {
- *         // Fix violations incrementally
- *         if (Forbidden(state)) {
- *             return fixViolations(state);
+ *     public MyState Ensure(MyState state, int threadId, int totalThreads) {
+ *         // Fix violations for this thread's partition
+ *         for (int i = threadId; i < violations.length; i += totalThreads) {
+ *             state = fixViolation(state, violations[i]);
  *         }
  *         return state;
  *     }
  *     
  *     @Override
- *     public MyState Advance(MyState state) {
- *         // Make progress toward solution
- *         return makeProgress(state);
+ *     public MyState Advance(MyState state, int threadId, int totalThreads) {
+ *         // Make progress for this thread's partition
+ *         for (int i = threadId; i < workItems.length; i += totalThreads) {
+ *             state = processItem(state, workItems[i]);
+ *         }
+ *         return state;
  *     }
  *     
  *     @Override
@@ -104,32 +119,36 @@ public interface LLPProblem<T> {
     boolean Forbidden(T state);
     
     /**
-     * The Ensure operation fixes constraint violations to make the state valid.
+     * The Ensure operation fixes constraint violations for this thread's partition.
      * 
      * <p>This method is called after Advance to repair any violations introduced.
-     * It should modify the state to satisfy all local constraints while maintaining
-     * progress in the lattice ordering.
+     * Each thread should work on a subset of the violations or problem space,
+     * using the threadId and totalThreads to partition the work.
      * 
      * <p><b>Implementation Requirements:</b>
      * <ul>
-     *   <li>Must fix all violations detected by Forbidden</li>
-     *   <li>Should be idempotent: Ensure(Ensure(s)) = Ensure(s)</li>
+     *   <li>Must fix violations detected by Forbidden for this thread's partition</li>
+     *   <li>Should be idempotent: Ensure(Ensure(s, tid, total), tid, total) = Ensure(s, tid, total)</li>
      *   <li>Must maintain monotonic progress in the lattice</li>
-     *   <li>Should return the same state if no violations exist</li>
+     *   <li>Should return the same state if no violations exist in this partition</li>
      * </ul>
      * 
+     * <p><b>Single-threaded usage:</b> Call with threadId=0, totalThreads=1
+     * 
      * @param state The current state to be modified
-     * @return The updated state with constraint violations fixed
+     * @param threadId The ID of this thread (0-based)
+     * @param totalThreads The total number of threads
+     * @return The updated state with constraint violations fixed for this partition
      */
-    T Ensure(T state);
+    T Ensure(T state, int threadId, int totalThreads);
     
     /**
-     * The Advance operation moves the state toward the solution.
+     * The Advance operation moves the state toward the solution for this thread's partition.
      * 
      * <p>This method makes progress on the problem by updating the state,
      * potentially creating new forbidden configurations that will be fixed
-     * by subsequent Ensure operations. The key is making meaningful progress
-     * toward the solution.
+     * by subsequent Ensure operations. Each thread should work on a subset
+     * of the problem space.
      * 
      * <p><b>Implementation Requirements:</b>
      * <ul>
@@ -137,12 +156,17 @@ public interface LLPProblem<T> {
      *   <li>May create forbidden states (that's expected and OK)</li>
      *   <li>Must eventually lead to convergence when alternated with Ensure</li>
      *   <li>Should advance in the lattice ordering</li>
+     *   <li>Each thread processes only its assigned partition</li>
      * </ul>
      * 
+     * <p><b>Single-threaded usage:</b> Call with threadId=0, totalThreads=1
+     * 
      * @param state The current state
-     * @return The advanced state with progress toward the solution
+     * @param threadId The ID of this thread (0-based)
+     * @param totalThreads The total number of threads
+     * @return The advanced state with progress toward the solution for this partition
      */
-    T Advance(T state);
+    T Advance(T state, int threadId, int totalThreads);
     
     /**
      * Returns the initial state for the problem.
@@ -174,32 +198,31 @@ public interface LLPProblem<T> {
     boolean isSolution(T state);
 
     /**
-     * Merge results from parallel operations.
-     * Default implementation returns the first non-forbidden state.
+     * Merge results from parallel thread operations.
+     * 
+     * <p>This method combines the results from multiple threads after parallel
+     * Advance or Ensure operations. The implementation should intelligently
+     * merge the states, typically taking the "best" progress from each.
+     * 
+     * <p><b>Common Patterns:</b>
+     * <ul>
+     *   <li>Take minimum distances (shortest path problems)</li>
+     *   <li>Union of edges (MST problems)</li>
+     *   <li>Logical OR of boolean arrays (reachability problems)</li>
+     * </ul>
+     * 
+     * @param state1 Result from one thread
+     * @param state2 Result from another thread
+     * @return The merged state combining progress from both threads
      */
     default T merge(T state1, T state2) {
+        // Default: prefer non-forbidden states
         if (Forbidden(state1) && !Forbidden(state2)) {
             return state2;
         }
         if (!Forbidden(state1) && Forbidden(state2)) {
             return state1;
         }
-        return state2;
-    }
-
-    /**
-     * Advance with context for thread-specific operations.
-     * Default implementation just calls Advance(state).
-     */
-    default T AdvanceWithContext(T state, int threadId, int totalThreads) {
-        return Advance(state);  // Default fallback
-    }
-
-    /**
-     * Ensure with context for thread-specific operations.
-     * Default implementation just calls Ensure(state).
-     */
-    default T EnsureWithContext(T state, int threadId, int totalThreads) {
-        return Ensure(state);   // Default fallback
+        return state2; // Both same constraint status, return either
     }
 }

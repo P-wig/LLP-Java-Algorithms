@@ -36,14 +36,15 @@ import com.llp.algorithm.LLPProblem;
  *       distance[u][v] ≤ distance[u][k] + distance[k][v] for all k
  *       (triangle inequality for all-pairs)</li>
  *   
- *   <li><b>Ensure(state):</b> Fix distance estimates that violate constraints.
+ *   <li><b>Ensure(state, threadId, totalThreads):</b> Fix distance estimates that violate constraints.
  *       Use relaxation to update distances that violate the triangle inequality.
- *       Consider the reweighting if in that phase.</li>
+ *       Distribute work across threads using threadId and totalThreads for parallel
+ *       constraint checking and fixing. Consider the reweighting if in that phase.</li>
  *   
- *   <li><b>Advance(state):</b> Make progress based on current phase:
+ *   <li><b>Advance(state, threadId, totalThreads):</b> Make progress based on current phase:
  *       - Reweighting phase: compute h-values using Bellman-Ford
- *       - Distance computation: run Dijkstra from each source
- *       - Can parallelize across different source vertices</li>
+ *       - Distance computation: run Dijkstra from each source (parallelize across sources)
+ *       - Use thread distribution to assign different source vertices to different threads</li>
  * </ul>
  * 
  * <h3>Example Usage:</h3>
@@ -81,37 +82,43 @@ public class JohnsonProblem implements LLPProblem<Object> {
     }
     
     @Override
-    public Object Ensure(Object state) {
-        // TODO: Implement constraint fixing
-        // Fix distance estimates that violate constraints
+    public Object Ensure(Object state, int threadId, int totalThreads) {
+        // TODO: Implement constraint fixing with thread distribution
+        // Fix distance estimates that violate constraints using parallel processing
+        // Distribute pairs/vertices among threads using threadId and totalThreads:
+        //   for (int u = threadId; u < numVertices; u += totalThreads)
+        //
         // Use Floyd-Warshall-style relaxation:
         //   if distance[u][v] > distance[u][k] + distance[k][v]:
         //     distance[u][v] = distance[u][k] + distance[k][v]
         //
         // Or fix reweighting violations if in that phase
         // Return the updated state with corrected distances
-        throw new UnsupportedOperationException("TODO: Implement Ensure() - fix violated constraints");
+        throw new UnsupportedOperationException("TODO: Implement Ensure() - fix violated constraints using thread distribution");
     }
     
     @Override
-    public Object Advance(Object state) {
-        // TODO: Implement progress logic
+    public Object Advance(Object state, int threadId, int totalThreads) {
+        // TODO: Implement progress logic with parallel processing
         // Make progress based on current algorithm phase:
         //
         // Phase 1 - Reweighting:
         //   Run Bellman-Ford to compute h[v] for all vertices
         //   These are used to reweight edges
+        //   Can parallelize edge relaxation across threads
         //
         // Phase 2 - All-pairs computation:
-        //   For each source vertex u (can parallelize):
-        //     Run Dijkstra from u on reweighted graph
-        //     Store distances in distance[u][*]
+        //   Distribute source vertices among threads:
+        //     for (int source = threadId; source < numVertices; source += totalThreads)
+        //       Run Dijkstra from source on reweighted graph
+        //       Store distances in distance[source][*]
         //
         // Phase 3 - Adjustment:
         //   Adjust distances back: distance[u][v] -= h[u] + h[v]
+        //   Distribute pairs among threads for parallel adjustment
         //
         // Return the advanced state
-        throw new UnsupportedOperationException("TODO: Implement Advance() - compute shortest paths");
+        throw new UnsupportedOperationException("TODO: Implement Advance() - compute shortest paths using thread distribution");
     }
     
     @Override
@@ -139,5 +146,24 @@ public class JohnsonProblem implements LLPProblem<Object> {
         //
         // Return true if all shortest paths are correctly computed
         throw new UnsupportedOperationException("TODO: Implement isSolution() - check if all paths computed");
+    }
+    
+    @Override
+    public Object merge(Object state1, Object state2) {
+        // TODO: Implement state merging for parallel execution
+        // Merge results from different threads processing different parts
+        // 
+        // For Johnson's algorithm, merging could involve:
+        // - Combining distance matrices from different source computations
+        // - Merging h-values from parallel Bellman-Ford execution
+        // - Ensuring consistency across all computed distances
+        //
+        // The merge strategy depends on which phase is active:
+        // - Reweighting phase: combine h-value computations
+        // - Distance phase: combine distance matrices from different sources
+        // - Adjustment phase: combine adjusted distance results
+        //
+        // Return merged state with combined results from both threads
+        throw new UnsupportedOperationException("TODO: Implement merge() - combine results from parallel threads");
     }
 }

@@ -24,13 +24,15 @@ import com.llp.algorithm.LLPProblem;
  *       An unstable pair is a man and woman who are not matched to each other but would
  *       both prefer each other over their current partners.</li>
  *   
- *   <li><b>Ensure(state):</b> Fix unstable pairs by updating the matching.
+ *   <li><b>Ensure(state, threadId, totalThreads):</b> Fix unstable pairs by updating the matching.
  *       When an unstable pair is found, break existing matches and create new ones
- *       to resolve the instability.</li>
+ *       to resolve the instability. Distribute the checking and fixing of pairs
+ *       among threads using threadId and totalThreads for parallel processing.</li>
  *   
- *   <li><b>Advance(state):</b> Propose new matches or improve the current matching.
+ *   <li><b>Advance(state, threadId, totalThreads):</b> Propose new matches or improve the current matching.
  *       For example, have unmatched men propose to their next preferred woman,
- *       or explore better matching configurations.</li>
+ *       or explore better matching configurations. Use thread distribution to
+ *       parallelize proposal processing across different men/women.</li>
  * </ul>
  * 
  * <h3>Example Usage:</h3>
@@ -67,29 +69,42 @@ public class StableMarriageProblem implements LLPProblem<Object> {
     }
     
     @Override
-    public Object Ensure(Object state) {
-        // TODO: Implement constraint fixing
-        // Fix unstable pairs in the matching
-        // When an unstable pair (m, w) is found:
+    public Object Ensure(Object state, int threadId, int totalThreads) {
+        // TODO: Implement constraint fixing with thread distribution
+        // Fix unstable pairs in the matching using parallel processing
+        // Distribute pairs/people among threads using threadId and totalThreads:
+        //   for (int man = threadId; man < numMen; man += totalThreads)
+        //
+        // When an unstable pair (m, w) is found by this thread:
         // 1. Break m's current match (if any)
         // 2. Break w's current match (if any)
         // 3. Match m with w
         //
+        // Coordinate with other threads to avoid conflicts in matching updates
         // Return the updated state with unstable pairs resolved
-        throw new UnsupportedOperationException("TODO: Implement Ensure() - fix unstable pairs");
+        throw new UnsupportedOperationException("TODO: Implement Ensure() - fix unstable pairs using thread distribution");
     }
     
     @Override
-    public Object Advance(Object state) {
-        // TODO: Implement progress logic
-        // Make progress toward a stable matching
-        // Possible approaches:
-        // 1. Have unmatched men propose to their next preferred woman
-        // 2. Update matches based on preferences
-        // 3. Explore better matching configurations
+    public Object Advance(Object state, int threadId, int totalThreads) {
+        // TODO: Implement progress logic with parallel processing
+        // Make progress toward a stable matching using multiple threads
+        // Distribute work among threads using threadId and totalThreads
         //
+        // Possible parallel approaches:
+        // 1. Distribute men among threads for parallel proposals:
+        //    for (int man = threadId; man < numMen; man += totalThreads)
+        //      Have unmatched men propose to their next preferred woman
+        //
+        // 2. Distribute women among threads for proposal processing:
+        //    Each thread handles proposals for specific women
+        //
+        // 3. Explore different matching configurations in parallel:
+        //    Each thread explores different parts of the solution space
+        //
+        // Coordinate between threads to avoid conflicting match updates
         // Return the advanced state with progress toward solution
-        throw new UnsupportedOperationException("TODO: Implement Advance() - propose new matches");
+        throw new UnsupportedOperationException("TODO: Implement Advance() - propose new matches using thread distribution");
     }
     
     @Override
@@ -112,5 +127,29 @@ public class StableMarriageProblem implements LLPProblem<Object> {
         //
         // Return true if state is a valid solution, false otherwise
         throw new UnsupportedOperationException("TODO: Implement isSolution() - check if stable and complete");
+    }
+    
+    @Override
+    public Object merge(Object state1, Object state2) {
+        // TODO: Implement state merging for parallel execution
+        // Merge matching results from different threads
+        //
+        // For stable marriage, merging involves:
+        // 1. Combining partial matchings from different threads
+        // 2. Resolving conflicts when multiple threads propose different matches
+        // 3. Ensuring the merged matching maintains stability constraints
+        //
+        // Merge strategies:
+        // - Priority-based: use preference rankings to resolve conflicts
+        // - Timestamp-based: prefer more recent proposals
+        // - Stability-preserving: choose matches that maintain overall stability
+        //
+        // Example approach:
+        // - Take the union of all matches from both states
+        // - For conflicting matches, resolve using preference rankings
+        // - Ensure no person is matched to multiple partners
+        //
+        // Return merged state with combined matching results
+        throw new UnsupportedOperationException("TODO: Implement merge() - combine matching results from parallel threads");
     }
 }

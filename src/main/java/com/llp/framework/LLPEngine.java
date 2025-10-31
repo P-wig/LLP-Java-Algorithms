@@ -6,6 +6,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Minimal streams-based execution engine for parallel LLP algorithms.
+ * 
+ * Uses the unified LLP interface where all operations accept threadId and totalThreads
+ * parameters, enabling seamless single-threaded and multi-threaded execution.
  */
 public class LLPEngine<T> {
     
@@ -28,7 +31,7 @@ public class LLPEngine<T> {
     }
     
     /**
-     * Execute using streams-based parallel approach.
+     * Execute using streams-based parallel approach with unified interface.
      */
     public T execute(T initialState) {
         AtomicReference<T> currentState = new AtomicReference<>(initialState);
@@ -42,24 +45,24 @@ public class LLPEngine<T> {
             
             // Check if current state is forbidden
             if (problem.Forbidden(current)) {
-                // Fix violations with parallel Ensure
+                // Fix violations with parallel Ensure using unified interface
                 T afterEnsure = IntStream.range(0, parallelism)
                     .parallel()
-                    .mapToObj(threadId -> problem.EnsureWithContext(current, threadId, parallelism))
-                    .reduce(current, problem::merge);  // USE PROBLEM'S MERGE METHOD
+                    .mapToObj(threadId -> problem.Ensure(current, threadId, parallelism))
+                    .reduce(current, problem::merge);
                 currentState.set(afterEnsure);
                 
                 System.out.println("  Iteration " + iterationCount + ": Fixed forbidden state");
                 
             } else {
-                // Make progress with parallel Advance
+                // Make progress with parallel Advance using unified interface
                 T afterAdvance = IntStream.range(0, parallelism)
                     .parallel()
                     .mapToObj(threadId -> {
-                        // Each thread works on different part
-                        return problem.AdvanceWithContext(current, threadId, parallelism);
+                        // Each thread works on different part using unified interface
+                        return problem.Advance(current, threadId, parallelism);
                     })
-                    .reduce(current, problem::merge);  // USE PROBLEM'S MERGE METHOD
+                    .reduce(current, problem::merge);
                 currentState.set(afterAdvance);
                 
                 // Check if Advance created violations and fix them
@@ -67,8 +70,8 @@ public class LLPEngine<T> {
                 if (problem.Forbidden(advanced)) {
                     T afterEnsure = IntStream.range(0, parallelism)
                         .parallel()
-                        .mapToObj(i -> problem.Ensure(advanced))
-                        .reduce(advanced, problem::merge);  // USE PROBLEM'S MERGE METHOD
+                        .mapToObj(threadId -> problem.Ensure(advanced, threadId, parallelism))
+                        .reduce(advanced, problem::merge);
                     currentState.set(afterEnsure);
                     
                     System.out.println("  Iteration " + iterationCount + ": Advanced then fixed violation");

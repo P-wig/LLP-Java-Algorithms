@@ -141,7 +141,7 @@ public class BellmanFordProblem {
 
 
     /**
-     * Bellman-Ford problem implementation using LLP framework.
+     * Bellman-Ford problem implementation using unified LLP framework.
      */
     static class BellmanFordLLPProblem implements LLPProblem<BellmanFordState> {
         
@@ -171,30 +171,46 @@ public class BellmanFordProblem {
         }
         
         @Override
-        public BellmanFordState Ensure(BellmanFordState state) {
-            // Fix distance estimates that violate constraints
-            BellmanFordState result = state;
-            for (Edge edge : state.edges) {
+        public BellmanFordState Ensure(BellmanFordState state, int threadId, int totalThreads) {
+            // Each thread fixes violations for specific edges - distributed work
+            java.util.List<Integer> updatedVertices = new java.util.ArrayList<>();
+            java.util.List<Double> updatedDistances = new java.util.ArrayList<>();
+            
+            // Distribute edges among threads using modulo arithmetic
+            for (int edgeIndex = threadId; edgeIndex < state.edges.length; edgeIndex += totalThreads) {
+                Edge edge = state.edges[edgeIndex];
+                
                 if (Double.isFinite(state.distances[edge.from])) {
                     double newDistance = state.distances[edge.from] + edge.weight;
                     if (state.distances[edge.to] > newDistance + EPSILON) {
-                        System.out.println("    Fixing vertex " + edge.to + ": " + 
+                        System.out.println("    Thread-" + threadId + " fixing vertex " + edge.to + ": " + 
                                          state.distances[edge.to] + " -> " + newDistance + 
                                          " via edge " + edge);
-                        result = result.withDistance(edge.to, newDistance);
+                        updatedVertices.add(edge.to);
+                        updatedDistances.add(newDistance);
                     }
                 }
             }
-            return result;
+            
+            if (!updatedVertices.isEmpty()) {
+                int[] vertices = updatedVertices.stream().mapToInt(i -> i).toArray();
+                double[] distances = updatedDistances.stream().mapToDouble(d -> d).toArray();
+                return state.withMultipleDistances(vertices, distances);
+            }
+            
+            return state; // No fixes made by this thread
         }
         
         @Override
-        public BellmanFordState AdvanceWithContext(BellmanFordState state, int threadId, int totalThreads) {
+        public BellmanFordState Advance(BellmanFordState state, int threadId, int totalThreads) {
             // Each thread works on specific edges - TRUE PARALLELISM
             java.util.List<Integer> updatedVertices = new java.util.ArrayList<>();
             java.util.List<Double> updatedDistances = new java.util.ArrayList<>();
             
-            // Distribute edges among threads
+            // Distribute edges among threads using modulo arithmetic
+            // Thread 0 gets: 0, 3, 6, 9...
+            // Thread 1 gets: 1, 4, 7, 10...
+            // Thread 2 gets: 2, 5, 8, 11...
             for (int edgeIndex = threadId; edgeIndex < state.edges.length; edgeIndex += totalThreads) {
                 Edge edge = state.edges[edgeIndex];
                 
@@ -211,31 +227,13 @@ public class BellmanFordProblem {
             
             if (!updatedVertices.isEmpty()) {
                 int[] vertices = updatedVertices.stream().mapToInt(i -> i).toArray();
-                double[] distances = updatedDistances.stream().mapToDouble(d -> d).toArray();
+                double[] distances = updatedDistances.stream().mapToDouble(d -> d).toArray(); // FIX: was updatedVertices
                 return state.withMultipleDistances(vertices, distances);
             }
             
             return state; // No improvements made by this thread
         }
         
-        @Override
-        public BellmanFordState Advance(BellmanFordState state) {
-            // Fallback: relax all edges sequentially
-            BellmanFordState result = state;
-            for (Edge edge : state.edges) {
-                if (Double.isFinite(state.distances[edge.from])) {
-                    double newDistance = state.distances[edge.from] + edge.weight;
-                    if (newDistance < state.distances[edge.to] - EPSILON) {
-                        result = result.withDistance(edge.to, newDistance);
-                    }
-                }
-            }
-            return result;
-        }
-        
-        /**
-         * CRITICAL: Override the merge method to properly combine parallel results.
-         */
         @Override
         public BellmanFordState merge(BellmanFordState state1, BellmanFordState state2) {
             // Check if either state has no updates
@@ -265,37 +263,6 @@ public class BellmanFordProblem {
         public boolean isSolution(BellmanFordState state) {
             // Solution when no constraint violations exist
             return !Forbidden(state);
-        }
-
-        @Override
-        public BellmanFordState EnsureWithContext(BellmanFordState state, int threadId, int totalThreads) {
-            // Each thread fixes violations for specific edges - TRUE PARALLELISM
-            java.util.List<Integer> updatedVertices = new java.util.ArrayList<>();
-            java.util.List<Double> updatedDistances = new java.util.ArrayList<>();
-            
-            // Distribute edges among threads for Ensure phase too
-            for (int edgeIndex = threadId; edgeIndex < state.edges.length; edgeIndex += totalThreads) {
-                Edge edge = state.edges[edgeIndex];
-                
-                if (Double.isFinite(state.distances[edge.from])) {
-                    double newDistance = state.distances[edge.from] + edge.weight;
-                    if (state.distances[edge.to] > newDistance + EPSILON) {
-                        System.out.println("    Thread-" + threadId + " fixing vertex " + edge.to + ": " + 
-                                         state.distances[edge.to] + " -> " + newDistance + 
-                                         " via edge " + edge);
-                        updatedVertices.add(edge.to);
-                        updatedDistances.add(newDistance);
-                    }
-                }
-            }
-            
-            if (!updatedVertices.isEmpty()) {
-                int[] vertices = updatedVertices.stream().mapToInt(i -> i).toArray();
-                double[] distances = updatedDistances.stream().mapToDouble(d -> d).toArray();
-                return state.withMultipleDistances(vertices, distances);
-            }
-            
-            return state; // No fixes made by this thread
         }
     }
     
