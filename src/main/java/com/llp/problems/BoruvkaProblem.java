@@ -604,7 +604,7 @@ public class BoruvkaProblem {
         int numVertices = 15;
         
         // Test recursive implementation
-        System.out.println("=== Recursive Implementation (Following Written Example) ===");
+        System.out.println("=== LLP Recursive Implementation (Following Written Example) ===");
         Set<Integer> V = new HashSet<>();
         for (int i = 0; i < numVertices; i++) {
             V.add(i);
@@ -621,8 +621,6 @@ public class BoruvkaProblem {
         System.out.println("Total weight: " + totalWeight);
         System.out.println("Number of edges: " + mst.size());
         
-        // Test LLP implementation
-        System.out.println("\n=== LLP Implementation (Multi-threaded) ===");
         BoruvkaLLPProblem llpProblem = new BoruvkaLLPProblem(numVertices, edges);
         
         LLPSolver<BoruvkaState> solver = null;
