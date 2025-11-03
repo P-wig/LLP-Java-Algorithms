@@ -32,13 +32,13 @@ LLP-Java-Algorithms/
 │   │               │   └── LLPSolver.java
 │   │               ├── framework/         # Simplified framework
 │   │               │   └── LLPEngine.java (streams-based)
-│   │               ├── problems/          # Problem implementations (skeletons)
-│   │               │   ├── StableMarriageProblem.java
-│   │               │   ├── ParallelPrefixProblem.java
-│   │               │   ├── ConnectedComponentsProblem.java
-│   │               │   ├── BellmanFordProblem.java
-│   │               │   ├── JohnsonProblem.java
-│   │               │   └── BoruvkaProblem.java
+│   │               ├── problems/          # Problem implementations
+│   │               │   ├── StableMarriageProblem.java (TODO)
+│   │               │   ├── ParallelPrefixProblem.java (TODO)
+│   │               │   ├── ConnectedComponentsProblem.java ✅
+│   │               │   ├── BellmanFordProblem.java ✅
+│   │               │   ├── JohnsonProblem.java (TODO)
+│   │               │   └── BoruvkaProblem.java ✅
 │   │               └── examples/          # Example usage
 │   │                   └── SimpleLLPExample.java
 │   └── test/
@@ -50,6 +50,54 @@ LLP-Java-Algorithms/
 ├── run_example.sh                         # Run example script
 └── test.sh                                # Test script
 ```
+
+## Implemented Problems
+
+### ✅ **Boruvka's Minimum Spanning Tree Algorithm** (`BoruvkaProblem.java`)
+Complete implementation of Boruvka's MST algorithm using the LLP framework.
+
+**Features:**
+- Recursive and LLP parallel implementations
+- Union-Find data structure with path compression
+- Symmetry breaking for cycle prevention
+- Graph reduction for component abstraction
+- Performance testing with multiple thread counts
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects when `G[j] ≠ G[G[j]]` (Union-Find compression violations)
+- **Ensure**: Applies path compression to fix parent array inconsistencies
+- **Advance**: Performs edge selection, parent assignment, and graph reduction
+- **Merge**: Combines MST edges from parallel threads
+
+### ✅ **Connected Components Problem** (`ConnectedComponentsProblem.java`)
+Parallel algorithm for finding connected components in an undirected graph.
+
+**Features:**
+- Component label propagation
+- Round-robin thread distribution
+- Efficient component merging
+- Multiple graph topologies support
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects edges connecting vertices with different component labels
+- **Ensure**: Merges components by assigning consistent labels
+- **Advance**: Propagates minimum labels along edges
+- **Merge**: Combines component assignments from parallel threads
+
+### ✅ **Bellman-Ford Single-Source Shortest Path** (`BellmanFordProblem.java`)
+Shortest path algorithm that handles negative edge weights.
+
+**Features:**
+- Parallel edge relaxation
+- Triangle inequality constraint enforcement
+- Negative cycle detection capability
+- Distance estimation convergence
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects triangle inequality violations
+- **Ensure**: Fixes distance estimate violations
+- **Advance**: Relaxes edges to improve distance estimates
+- **Merge**: Combines shortest distance estimates
 
 ## Simplified Architecture
 
@@ -72,6 +120,19 @@ Java Parallel Streams (automatic coordination)
 
 ## LLP Algorithm Core Concepts
 
+### The LLP Framework Pattern
+
+The LLP framework separates two critical concerns that are essential for correct parallel algorithm execution:
+
+#### **`Forbidden` vs `isSolution`**
+- **`Forbidden`**: Detects **data structure integrity violations** (e.g., Union-Find compression issues)
+- **`isSolution`**: Detects **algorithm completion** (e.g., MST fully constructed)
+
+This separation ensures that:
+1. **Data structures remain consistent** during parallel execution
+2. **Algorithm termination** is detected correctly
+3. **Parallel threads** can work safely without corruption
+
 ### The Three Core Methods
 
 When implementing a problem using the LLP framework, you need to define these three methods:
@@ -84,11 +145,11 @@ This predicate determines if a given configuration is invalid or violates proble
 - Identify configurations that need correction
 
 **Example use cases**:
-- In Stable Marriage: Check if there are unstable pairs
+- In Boruvka MST: Check if `G[j] ≠ G[G[j]]` (Union-Find compression violations)
 - In Bellman-Ford: Check if distances violate triangle inequality
 - In Connected Components: Check if component labels are inconsistent
 
-#### 2. **Ensure(state) → state**
+#### 2. **Ensure(state, threadId, totalThreads) → state**
 This operation modifies the state to satisfy local constraints and remove forbidden configurations.
 
 **Purpose**:
@@ -96,9 +157,12 @@ This operation modifies the state to satisfy local constraints and remove forbid
 - Maintain problem invariants
 - Ensure forward progress doesn't create permanent violations
 
-**Key**: Always return a **new state object** (immutable pattern)
+**Key Features**:
+- **Thread Distribution**: Uses `threadId` and `totalThreads` for parallel work distribution
+- **Immutable Pattern**: Always return a **new state object**
+- **Round-Robin Distribution**: `for (int i = threadId; i < work.length; i += totalThreads)`
 
-#### 3. **Advance(state) → state**
+#### 3. **Advance(state, threadId, totalThreads) → state**
 This operation moves the state forward toward the solution, potentially creating new forbidden configurations.
 
 **Purpose**:
@@ -106,7 +170,10 @@ This operation moves the state forward toward the solution, potentially creating
 - Explore the solution space
 - Move up in the lattice ordering
 
-**Key**: Focus on progress, not constraints (Ensure will fix violations)
+**Key Features**:
+- **Parallel Execution**: Each thread processes different parts of the problem
+- **Progress Focus**: Focus on advancement, not constraint satisfaction
+- **Thread Safety**: Uses immutable state pattern for safe parallel execution
 
 ## Quick Start
 
@@ -139,8 +206,8 @@ class MyProblem implements LLPProblem<MyState> {
     }
     
     @Override
-    public MyState Ensure(MyState state) {
-        // Fix violations
+    public MyState Ensure(MyState state, int threadId, int totalThreads) {
+        // Fix violations for this thread's partition
         if (Forbidden(state)) {
             return state.withValue(0);  // Fix by setting to 0
         }
@@ -148,8 +215,8 @@ class MyProblem implements LLPProblem<MyState> {
     }
     
     @Override
-    public MyState Advance(MyState state) {
-        // Make progress
+    public MyState Advance(MyState state, int threadId, int totalThreads) {
+        // Make progress for this thread's partition
         return state.withValue(state.value + 1);
     }
     
@@ -178,8 +245,9 @@ public static void main(String[] args) {
         System.out.println("Solution: " + solution.value);
         
         // Simple statistics
-        System.out.println("Threads used: " + solver.getNumThreads());
-        System.out.println("Max iterations: " + solver.getMaxIterations());
+        LLPSolver.ExecutionStats stats = solver.getExecutionStats();
+        System.out.println("Iterations: " + stats.getIterationCount());
+        System.out.println("Converged: " + stats.hasConverged());
         
     } catch (Exception e) {
         e.printStackTrace();
@@ -193,57 +261,62 @@ public static void main(String[] args) {
 
 ### 🎯 **Immutable State Pattern**
 ```java
-// Instead of complex thread-safe state management:
-class CounterState {
-    final int value;  // Immutable!
+// Thread-safe state management:
+class GraphState {
+    final int[] labels;  // Immutable!
+    final Edge[] edges;  // Immutable!
     
-    public CounterState withValue(int newValue) {
-        return new CounterState(newValue);  // Always create new
+    public GraphState withLabels(int[] newLabels) {
+        return new GraphState(edges, newLabels);  // Always create new
     }
 }
 ```
 
-### 🔄 **Java Streams Parallelism**
+### 🔄 **Parallel Thread Distribution**
 ```java
-// Framework uses streams internally:
-IntStream.range(0, parallelism)
-    .parallel()                              // Automatic parallelization
-    .mapToObj(i -> problem.Advance(state))   // Your method called in parallel
-    .reduce(state, this::mergeStates);       // Automatic coordination
+// Round-robin work distribution pattern:
+for (int i = threadId; i < workItems.length; i += totalThreads) {
+    // Thread 0 gets: 0, 3, 6, 9...
+    // Thread 1 gets: 1, 4, 7, 10...
+    // Thread 2 gets: 2, 5, 8, 11...
+    processWorkItem(workItems[i]);
+}
 ```
 
 ### ⚡ **Simple Configuration**
 ```java
-// Old way (removed):
-// LLPConfiguration config = new LLPConfiguration().setNumThreads(4).setMaxIterations(100);
-// LLPSolver<State> solver = new LLPSolver<>(problem, config);
-
-// New way:
-LLPSolver<State> solver = new LLPSolver<>(problem, 4, 100);  // Direct parameters
+// Direct parameter constructors:
+LLPSolver<State> solver = new LLPSolver<>(problem, 4, 100);  // 4 threads, 100 max iterations
 ```
 
-## Example: Simple Counter Problem
+## Running Implemented Problems
 
-See `src/main/java/com/llp/examples/SimpleLLPExample.java` for a complete working example that demonstrates:
-- How to define an immutable state class
-- How to implement the three core methods
-- How to use the simplified LLP framework
-
-Run the example:
+### Boruvka's Algorithm
 ```bash
-./run_example.sh
+# Compile and run
+javac -cp . src/main/java/com/llp/problems/BoruvkaProblem.java
+java -cp . com.llp.problems.BoruvkaProblem
 ```
 
-## Problems to Implement
+### Connected Components
+```bash
+# Compile and run
+javac -cp . src/main/java/com/llp/problems/ConnectedComponentsProblem.java
+java -cp . com.llp.problems.ConnectedComponentsProblem
+```
 
-This assignment requires implementing the following problems using the LLP framework:
+### Bellman-Ford Algorithm
+```bash
+# Compile and run
+javac -cp . src/main/java/com/llp/problems/BellmanFordProblem.java
+java -cp . com.llp.problems.BellmanFordProblem
+```
+
+## Remaining Problems to Implement
 
 1. **Stable Marriage Problem** (`StableMarriageProblem.java`)
 2. **Parallel Prefix Problem** (`ParallelPrefixProblem.java`)  
-3. **Connected Components** (`ConnectedComponentsProblem.java`)
-4. **Bellman-Ford Algorithm** (`BellmanFordProblem.java`)
-5. **Johnson's Algorithm** (`JohnsonProblem.java`)
-6. **Boruvka's Algorithm** (`BoruvkaProblem.java`)
+3. **Johnson's Algorithm** (`JohnsonProblem.java`)
 
 ### Implementation Template
 
@@ -262,8 +335,8 @@ class YourState {
 // 2. Problem class (your algorithm)
 class YourProblem implements LLPProblem<YourState> {
     public boolean Forbidden(YourState state) { /* constraint check */ }
-    public YourState Ensure(YourState state) { /* fix violations */ }
-    public YourState Advance(YourState state) { /* make progress */ }
+    public YourState Ensure(YourState state, int threadId, int totalThreads) { /* fix violations */ }
+    public YourState Advance(YourState state, int threadId, int totalThreads) { /* make progress */ }
     public YourState getInitialState() { /* starting point */ }
     public boolean isSolution(YourState state) { /* done check */ }
 }
@@ -315,7 +388,12 @@ public static void main(String[] args) {
 - Direct constructor parameters
 - No complex builder patterns
 
-## Execution Flow (Simplified)
+### 🧪 **Production-Ready Examples**
+- Complete working implementations
+- Performance testing and analysis
+- Educational debugging output
+
+## Execution Flow
 
 ```
 Initialize State
@@ -327,15 +405,22 @@ Initialize State
 ┌─────────────────────────┐       │
 │ Parallel Advance        │       │
 │ (Java Streams)          │       │
+│ Each thread: threadId   │       │
+└─────────────────────────┘       │
+     ↓                             │
+┌─────────────────────────┐       │
+│ Merge thread results    │       │
 └─────────────────────────┘       │
      ↓                             │
 ┌─────────────────────────┐       │
 │ Parallel Ensure         │       │
 │ (Java Streams)          │       │
+│ Fix violations          │       │
 └─────────────────────────┘       │
      ↓                             │
 ┌─────────────────────────┐       │
 │ Check Convergence       │       │
+│ isSolution(state)       │       │
 └─────────────────────────┘       │
      ↓                             │
    Continue ──────────────────────┘
