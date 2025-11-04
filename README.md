@@ -1,6 +1,6 @@
 # LLP-Java-Algorithms
 
-**Authors:** Isaac Shepherd and Aaron Christson
+**Authors:** Isaac Shepherd (is23423) and Aaron Christson (aac6233)
 
 A simplified Java framework for implementing parallel LLP (Lattice-Linear Predicate) algorithms using Java Streams to solve various computational problems.
 
