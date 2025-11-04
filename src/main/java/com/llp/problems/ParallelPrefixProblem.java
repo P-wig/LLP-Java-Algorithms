@@ -7,53 +7,20 @@ import com.llp.algorithm.LLPProblem;
 import com.llp.algorithm.LLPSolver;
 
 /**
- * Parallel Prefix (Scan) Problem using the LLP framework.
+ * Parallel Prefix (Scan) Algorithm using the LLP framework.
  * 
- * <h3>Problem Description:</h3>
- * The parallel prefix (also called scan) problem computes all prefix sums of an array.
- * Given an array [a1, a2, ..., an] and an associative operator ⊕,
- * compute [a1, a1⊕a2, a1⊕a2⊕a3, ..., a1⊕a2⊕...⊕an].
+ * Problem Description:
+ * The parallel prefix (also called scan) algorithm computes all prefix results
+ * of an array given an associative operator. For an array [a1, a2, ..., an] and
+ * an associative operator ⊕, it computes [a1, a1⊕a2, a1⊕a2⊕a3, ..., a1⊕a2⊕...⊕an].
+ * Common examples include prefix sums, prefix products, and other reductions.
  * 
- * <h3>State Representation:</h3>
- * TODO: Define a state class that represents:
- * <ul>
- *   <li>The input array (original values)</li>
- *   <li>The current prefix array (partially or fully computed)</li>
- *   <li>Flags indicating which prefix values are correct/complete</li>
- *   <li>The associative operation to use (e.g., addition, multiplication)</li>
- * </ul>
- * 
- * <h3>Implementation Guide:</h3>
- * <ul>
- *   <li><b>Forbidden(state):</b> Check if any prefix value is incorrect.
- *       A prefix value at position i is incorrect if it doesn't equal
- *       the result of applying the operator to all elements from 0 to i.</li>
- *   
- *   <li><b>Ensure(state, threadId, totalThreads):</b> Fix incorrect prefix values.
- *       For any position with an incorrect prefix, recompute it using
- *       the correct formula: prefix[i] = prefix[i-1] ⊕ array[i].
- *       Distribute positions among threads using threadId and totalThreads
- *       for parallel correction of incorrect values.</li>
- *   
- *   <li><b>Advance(state, threadId, totalThreads):</b> Compute more prefix values in parallel.
- *       Use techniques like:
- *       - Computing prefixes at positions 2^k (power-of-two positions)
- *       - Propagating partial results across the array
- *       - Using the up-sweep/down-sweep pattern for efficient parallelism
- *       - Distribute work segments among threads for parallel computation</li>
- * </ul>
- * 
- * <h3>Example Usage:</h3>
- * <pre>{@code
- * // Compute prefix sums
- * int[] input = {1, 2, 3, 4, 5};
- * ParallelPrefixProblem problem = new ParallelPrefixProblem(input, Integer::sum);
- * LLPSolver<PrefixState> solver = new LLPSolver<>(problem);
- * PrefixState solution = solver.solve();
- * // Expected result: [1, 3, 6, 10, 15]
- * }</pre>
- * 
- * @see <a href="https://en.wikipedia.org/wiki/Prefix_sum">Prefix Sum</a>
+ * LLP Implementation Strategy:
+ * - State: Array of prefix values with completion flags
+ * - Forbidden: Prefix values that don't match sequential computation
+ * - Advance: Compute new prefix values using previous results
+ * - Ensure: Fix incorrect prefix computations
+ * - Parallelism: Multiple positions can be computed simultaneously
  */
 public class ParallelPrefixProblem implements LLPProblem<ParallelPrefixProblem.PrefixState> {
     
