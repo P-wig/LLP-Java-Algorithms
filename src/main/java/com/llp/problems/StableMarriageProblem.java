@@ -7,49 +7,17 @@ import com.llp.algorithm.LLPSolver;
 /**
  * Stable Marriage Problem using the LLP framework.
  * 
- * <h3>Problem Description:</h3>
+ * Problem Description:
  * The stable marriage problem involves matching n men and n women where each person
  * has a preference list ranking all members of the opposite gender. The goal is to find
  * a stable matching where no two people would prefer each other over their current partners.
  * 
- * <h3>State Representation:</h3>
- * StableMarriageState represents:
- * <ul>
- *   <li>Current matching configuration (who is matched with whom)</li>
- *   <li>Preference lists for men and women</li>
- *   <li>Ranking arrays for efficient preference lookups</li>
- * </ul>
- * 
- * <h3>Implementation Guide:</h3>
- * <ul>
- *   <li><b>Forbidden(state):</b> Check if the current matching has any unstable pairs.
- *       An unstable pair is a man and woman who are not matched to each other but would
- *       both prefer each other over their current partners.</li>
- *   
- *   <li><b>Ensure(state, threadId, totalThreads):</b> Fix unstable pairs by updating the matching.
- *       When an unstable pair is found, break existing matches and create new ones
- *       to resolve the instability. Distribute the checking and fixing of pairs
- *       among threads using threadId and totalThreads for parallel processing.</li>
- *   
- *   <li><b>Advance(state, threadId, totalThreads):</b> Propose new matches or improve the current matching.
- *       For example, have unmatched men propose to their next preferred woman,
- *       or explore better matching configurations. Use thread distribution to
- *       parallelize proposal processing across different men/women.</li>
- * </ul>
- * 
- * <h3>Example Usage:</h3>
- * <pre>{@code
- * // Define preferences
- * int[][] menPrefs = {{0, 1, 2}, {1, 2, 0}, {0, 1, 2}};
- * int[][] womenPrefs = {{1, 0, 2}, {0, 2, 1}, {0, 1, 2}};
- * 
- * // Create and solve
- * StableMarriageProblem problem = new StableMarriageProblem(menPrefs, womenPrefs);
- * LLPSolver<StableMarriageState> solver = new LLPSolver<>(problem);
- * StableMarriageState solution = solver.solve();
- * }</pre>
- * 
- * @see <a href="https://en.wikipedia.org/wiki/Stable_marriage_problem">Stable Marriage Problem</a>
+ * LLP Implementation Strategy:
+ * - State: Current matching configuration with preference lists and rankings
+ * - Forbidden: Matching has unstable pairs (mutual preference violations)
+ * - Advance: Unmatched individuals propose to preferred partners
+ * - Ensure: Fix unstable pairs by creating better matches
+ * - Parallelism: Distribute proposal and stability checking across threads
  */
 public class StableMarriageProblem implements LLPProblem<StableMarriageProblem.StableMarriageState> {
     
