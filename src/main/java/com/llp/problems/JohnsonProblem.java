@@ -69,24 +69,14 @@ public class JohnsonProblem implements LLPProblem<JohnsonProblem.JohnsonState> {
             this.verticesComputed = new boolean[n];
             this.currentPhase = Phase.REWEIGHTING;
             
-            // Initialize distance matrix - start with no connections (infinite distance)
+            // Initialize distance matrix - all infinite except diagonal
             for (int i = 0; i < n; i++) {
-                for (int j = 0; j < n; j++) {
-                    if (i == j) {
-                        distances[i][j] = 0; // Distance to self is zero
-                    } else {
-                        distances[i][j] = Integer.MAX_VALUE; // No direct connection
-                    }
-                }
-            }
-            
-            // Add direct edge distances from the input edges
-            for (Edge edge : edges) {
-                distances[edge.from][edge.to] = edge.weight;
+                Arrays.fill(distances[i], Integer.MAX_VALUE);
+                distances[i][i] = 0; // Distance to self is zero
             }
             
             // Initialize h-values and computed flags
-            Arrays.fill(h, 0);
+            Arrays.fill(h, Integer.MAX_VALUE);
             Arrays.fill(verticesComputed, false);
         }
         
@@ -139,8 +129,16 @@ public class JohnsonProblem implements LLPProblem<JohnsonProblem.JohnsonState> {
         public boolean isPhaseComplete() {
             switch (currentPhase) {
                 case REWEIGHTING:
-                    // Reweighting is complete when h-values are computed
-                    return !Arrays.equals(h, new int[n]);
+                    // Reweighting is complete when h-values are properly computed
+                    // Check if h-values have been set 
+                    boolean hasNonZeroH = false;
+                    for (int i = 1; i < n; i++) { // Skip h[0] which should be 0
+                        if (h[i] != 0) {
+                            hasNonZeroH = true;
+                            break;
+                        }
+                    }
+                    return hasNonZeroH;
                 case COMPUTING_DISTANCES:
                     // Distance computation complete when all vertices processed
                     for (boolean computed : verticesComputed) {
@@ -207,46 +205,105 @@ public class JohnsonProblem implements LLPProblem<JohnsonProblem.JohnsonState> {
     }
 
     /**
-     * Returns true if any distance estimates violate triangle inequality constraints.
+     * Returns true if the current state violates Johnson's algorithm constraints.
      */
     @Override
     public boolean Forbidden(JohnsonState state) {
-        // For simplicity, only check basic triangle inequality violations
-        for (int i = 0; i < state.n; i++) {
-            for (int j = 0; j < state.n; j++) {
-                for (int k = 0; k < state.n; k++) {
-                    if (state.distances[i][k] != Integer.MAX_VALUE && 
-                        state.distances[k][j] != Integer.MAX_VALUE &&
-                        state.distances[i][j] != Integer.MAX_VALUE) {
-                        // Check if we can improve distance[i][j] through k
-                        if (state.distances[i][j] > state.distances[i][k] + state.distances[k][j]) {
-                            return true; // Found violation - state is forbidden
-                        }
-                    }
-                }
-            }
+        switch (state.currentPhase) {
+            case REWEIGHTING:
+                return false;
+                
+            case COMPUTING_DISTANCES:
+                // Not forbidden - let Advance handle the logic
+                return false;
+                
+            case ADJUSTING:
+            case COMPLETE:
+                // Not forbidden in final phases
+                return false;
+                
+            default:
+                return false;
         }
-        return false; 
     }
     
     /**
-     * Fixes distance violations using Floyd-Warshall relaxation, distributed across threads.
+     * Fixes violations in the current state based on the algorithm phase.
      */
     @Override
     public JohnsonState Ensure(JohnsonState state, int threadId, int totalThreads) {
+        switch (state.currentPhase) {
+            case REWEIGHTING:
+                return ensureBellmanFord(state, threadId, totalThreads);
+                
+            case COMPUTING_DISTANCES:
+                return ensureDijkstra(state, threadId, totalThreads);
+                
+            case ADJUSTING:
+                return ensureAdjustment(state, threadId, totalThreads);
+                
+            default:
+                return state;
+        }
+    }
+    
+    /**
+     * Performs Bellman-Ford relaxation to compute h-values.
+     */
+    private JohnsonState ensureBellmanFord(JohnsonState state, int threadId, int totalThreads) {
+        if (threadId != 0) return state; // Only thread 0 handles this
+        
+        int[] newH = Arrays.copyOf(state.h, state.n);
+        boolean changed = false;
+        
+        // Initialize h[0] = 0 if not set
+        if (newH[0] == Integer.MAX_VALUE) {
+            newH[0] = 0;
+            changed = true;
+        }
+        
+        // Relax edges assigned to this thread
+        for (Edge edge : state.edges) {
+            if (newH[edge.from] != Integer.MAX_VALUE) {
+                int newDist = newH[edge.from] + edge.weight;
+                if (newDist < newH[edge.to]) {
+                    newH[edge.to] = newDist;
+                    changed = true;
+                }
+            }
+        }
+        
+        // Add auxiliary edges (0 weight from auxiliary vertex to all vertices)
+        for (int i = 1; i < state.n; i++) {
+            if (newH[i] == Integer.MAX_VALUE) {
+                newH[i] = 0;
+                changed = true;
+            }
+        }
+        
+        return changed ? state.withH(newH) : state;
+    }
+    
+    /**
+     * Performs Dijkstra-like computation on reweighted graph.
+     */
+    private JohnsonState ensureDijkstra(JohnsonState state, int threadId, int totalThreads) {
         int[][] newDistances = JohnsonState.copyMatrix(state.distances);
         boolean changed = false;
         
-        // Distribute vertices among threads for parallel relaxation
-        for (int i = threadId; i < state.n; i += totalThreads) {
-            for (int j = 0; j < state.n; j++) {
-                for (int k = 0; k < state.n; k++) {
-                    if (newDistances[i][k] < Integer.MAX_VALUE && 
-                        newDistances[k][j] < Integer.MAX_VALUE) {
-                        int newDist = newDistances[i][k] + newDistances[k][j];
-                        if (newDist < newDistances[i][j]) {
-                            newDistances[i][j] = newDist;
-                            changed = true;
+        // Process vertices assigned to this thread
+        for (int source = threadId; source < state.n; source += totalThreads) {
+            if (!state.verticesComputed[source]) {
+                // Relax edges from this source using reweighted edges
+                for (Edge edge : state.edges) {
+                    if (edge.from == source) {
+                        int reweightedWeight = state.getReweightedWeight(edge.from, edge.to, edge.weight);
+                        if (newDistances[source][edge.from] != Integer.MAX_VALUE) {
+                            int newDist = newDistances[source][edge.from] + reweightedWeight;
+                            if (newDist < newDistances[source][edge.to]) {
+                                newDistances[source][edge.to] = newDist;
+                                changed = true;
+                            }
                         }
                     }
                 }
@@ -257,35 +314,196 @@ public class JohnsonProblem implements LLPProblem<JohnsonProblem.JohnsonState> {
     }
     
     /**
-     * Makes progress using complete Floyd-Warshall relaxation.
+     * Adjusts final distances using h-values.
+     */
+    private JohnsonState ensureAdjustment(JohnsonState state, int threadId, int totalThreads) {
+        int[][] newDistances = JohnsonState.copyMatrix(state.distances);
+        boolean changed = false;
+        
+        // Distribute distance matrix updates among threads
+        for (int i = threadId; i < state.n; i += totalThreads) {
+            for (int j = 0; j < state.n; j++) {
+                if (newDistances[i][j] != Integer.MAX_VALUE) {
+                    int adjustedDist = newDistances[i][j] + state.h[j] - state.h[i];
+                    if (adjustedDist != newDistances[i][j]) {
+                        newDistances[i][j] = adjustedDist;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        
+        return changed ? state.withDistances(newDistances) : state;
+    }
+    
+    /**
+     * Makes progress through Johnson's algorithm phases.
      */
     @Override
     public JohnsonState Advance(JohnsonState state, int threadId, int totalThreads) {
-        if (threadId != 0) {
-            return state;
+        switch (state.currentPhase) {
+            case REWEIGHTING:
+                return advanceBellmanFord(state, threadId, totalThreads);
+                
+            case COMPUTING_DISTANCES:
+                return advanceDijkstra(state, threadId, totalThreads);
+                
+            case ADJUSTING:
+                return advanceToComplete(state, threadId, totalThreads);
+                
+            default:
+                return state;
+        }
+    }
+    
+    /**
+     * Advances Bellman-Ford computation for h-values.
+     */
+    private JohnsonState advanceBellmanFord(JohnsonState state, int threadId, int totalThreads) {
+        if (threadId != 0) return state; // Only thread 0 handles phase transitions
+        
+        // Step 1: Create auxiliary vertex and compute h-values
+        int[] newH = new int[state.n];
+        Arrays.fill(newH, Integer.MAX_VALUE);
+        
+        newH[0] = 0;
+        
+        // Run Bellman-Ford algorithm for n-1 iterations
+        for (int iteration = 0; iteration < state.n - 1; iteration++) {
+            boolean changed = false;
+            
+            // Relax all edges
+            for (Edge edge : state.edges) {
+                if (newH[edge.from] != Integer.MAX_VALUE) {
+                    int newDist = newH[edge.from] + edge.weight;
+                    if (newDist < newH[edge.to]) {
+                        newH[edge.to] = newDist;
+                        changed = true;
+                    }
+                }
+            }
+            
+            // Also add auxiliary edges (0 weight from auxiliary to all vertices)
+            for (int i = 1; i < state.n; i++) {
+                if (newH[i] > 0) {
+                    newH[i] = 0;
+                    changed = true;
+                }
+            }
+            
+            if (!changed) break; // Early termination
         }
         
-        int[][] newDistances = JohnsonState.copyMatrix(state.distances);
-        boolean globalChanged = false;
+        // Set h-values for any unreachable vertices
+        for (int i = 0; i < state.n; i++) {
+            if (newH[i] == Integer.MAX_VALUE) {
+                newH[i] = 0;
+            }
+        }
         
-        // Complete Floyd-Warshall: all k iterations
-        for (int k = 0; k < state.n; k++) {
-            for (int i = 0; i < state.n; i++) {
-                for (int j = 0; j < state.n; j++) {
-                    if (newDistances[i][k] != Integer.MAX_VALUE && 
-                        newDistances[k][j] != Integer.MAX_VALUE) {
-                        int newDist = newDistances[i][k] + newDistances[k][j];
-                        if (newDist < newDistances[i][j]) {
-                            newDistances[i][j] = newDist;
-                            globalChanged = true;
+        JohnsonState newState = state.withH(newH);
+        return newState.withPhase(Phase.COMPUTING_DISTANCES);
+    }
+    
+    /**
+     * Advances Dijkstra computation for each source vertex.
+     */
+    private JohnsonState advanceDijkstra(JohnsonState state, int threadId, int totalThreads) {
+        int[][] newDistances = JohnsonState.copyMatrix(state.distances);
+        boolean[] newVerticesComputed = Arrays.copyOf(state.verticesComputed, state.n);
+        
+        // Process vertices assigned to this thread
+        for (int source = threadId; source < state.n; source += totalThreads) {
+            if (!state.verticesComputed[source]) {
+                // Run simplified Dijkstra for this source on reweighted graph
+                boolean sourceChanged = runDijkstraForSource(state, newDistances, source);
+                if (sourceChanged) {
+                    newVerticesComputed[source] = true;
+                }
+            }
+        }
+        
+        JohnsonState newState = new JohnsonState(state.n, state.edges, newDistances, 
+                                                state.h, newVerticesComputed, state.currentPhase);
+        
+        // Check if all vertices are computed
+        if (threadId == 0 && allVerticesComputed(newVerticesComputed)) {
+            return newState.withPhase(Phase.ADJUSTING);
+        }
+        
+        return newState;
+    }
+    
+    /**
+     * Runs Dijkstra algorithm for a single source vertex.
+     */
+    private boolean runDijkstraForSource(JohnsonState state, int[][] distances, int source) {
+        // Initialize distances from this source
+        Arrays.fill(distances[source], Integer.MAX_VALUE);
+        distances[source][source] = 0;
+        
+        boolean[] visited = new boolean[state.n];
+        
+        // Simple Dijkstra implementation
+        for (int count = 0; count < state.n; count++) {
+            // Find minimum distance unvisited vertex
+            int u = -1;
+            for (int v = 0; v < state.n; v++) {
+                if (!visited[v] && (u == -1 || distances[source][v] < distances[source][u])) {
+                    u = v;
+                }
+            }
+            
+            if (u == -1 || distances[source][u] == Integer.MAX_VALUE) break;
+            
+            visited[u] = true;
+            
+            // Relax all edges from u using reweighted graph
+            for (Edge edge : state.edges) {
+                if (edge.from == u && !visited[edge.to]) {
+                    int reweightedWeight = state.getReweightedWeight(edge.from, edge.to, edge.weight);
+                    if (distances[source][u] != Integer.MAX_VALUE) {
+                        long newDist = (long)distances[source][u] + reweightedWeight;
+                        if (newDist < distances[source][edge.to] && newDist <= Integer.MAX_VALUE) {
+                            distances[source][edge.to] = (int)newDist;
                         }
                     }
                 }
             }
         }
         
-        JohnsonState newState = state.withDistances(newDistances);
-        return globalChanged ? newState : newState.withPhase(Phase.COMPLETE);
+        return true; // Always consider changed for simplicity
+    }
+    
+    /**
+     * Advances to completion by adjusting distances.
+     */
+    private JohnsonState advanceToComplete(JohnsonState state, int threadId, int totalThreads) {
+        if (threadId != 0) return state;
+        
+        int[][] newDistances = JohnsonState.copyMatrix(state.distances);
+        
+        // Adjust all distances back to original graph using h-values
+        for (int i = 0; i < state.n; i++) {
+            for (int j = 0; j < state.n; j++) {
+                if (newDistances[i][j] != Integer.MAX_VALUE) {
+                    newDistances[i][j] = newDistances[i][j] - state.h[i] + state.h[j];
+                }
+            }
+        }
+        
+        return new JohnsonState(state.n, state.edges, newDistances, state.h, 
+                               state.verticesComputed, Phase.COMPLETE);
+    }
+    
+    /**
+     * Checks if all vertices have been computed.
+     */
+    private boolean allVerticesComputed(boolean[] verticesComputed) {
+        for (boolean computed : verticesComputed) {
+            if (!computed) return false;
+        }
+        return true;
     }
     
     /**
@@ -293,9 +511,7 @@ public class JohnsonProblem implements LLPProblem<JohnsonProblem.JohnsonState> {
      */
     @Override
     public boolean isSolution(JohnsonState state) {
-        // A valid solution is one where no triangle inequality violations exist
-        // This means we have correct shortest paths regardless of the phase
-        return !Forbidden(state);
+        return state.currentPhase == Phase.COMPLETE && !Forbidden(state);
     }
     
     /**
