@@ -74,23 +74,23 @@ public class LLPEngine<T> {
                         .reduce(advanced, problem::merge);
                     currentState.set(afterEnsure);
                     
-                    System.out.println("  Iteration " + iterationCount + ": Advanced then fixed violation");
+                    System.out.println("Iteration " + iterationCount + ": Advanced then fixed violation");
                 } else {
-                    System.out.println("  Iteration " + iterationCount + ": Advanced without violation");
+                    System.out.println("Iteration " + iterationCount + ": Advanced without violation");
                 }
             }
             
             // Check for solution - get fresh state reference
             T finalState = currentState.get();
             if (problem.isSolution(finalState)) {
-                System.out.println("  ✓ Solution found at iteration " + iterationCount);
+                System.out.println("Solution found at iteration " + iterationCount);
                 converged = true;
                 break;
             }
             
             // Check for convergence (no progress)
             if (finalState.equals(previousState)) {
-                System.out.println("  ✓ Converged (no change) at iteration " + iterationCount);
+                System.out.println("Converged (no change) at iteration " + iterationCount);
                 converged = true;
                 break;
             }
@@ -99,7 +99,7 @@ public class LLPEngine<T> {
         }
         
         if (!converged) {
-            System.out.println("  ! Reached max iterations: " + maxIterations);
+            System.out.println("Reached max iterations: " + maxIterations);
         }
         
         return currentState.get();
