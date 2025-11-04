@@ -1,5 +1,7 @@
 # LLP-Java-Algorithms
 
+**Authors:** Isaac Shepherd and Aaron Christson
+
 A simplified Java framework for implementing parallel LLP (Lattice-Linear Predicate) algorithms using Java Streams to solve various computational problems.
 
 ## Overview
@@ -33,14 +35,14 @@ LLP-Java-Algorithms/
 │   │               ├── framework/         # Simplified framework
 │   │               │   └── LLPEngine.java (streams-based)
 │   │               ├── problems/          # Problem implementations
-│   │               │   ├── StableMarriageProblem.java (TODO)
-│   │               │   ├── ParallelPrefixProblem.java (TODO)
+│   │               │   ├── StableMarriageProblem.java ✅
+│   │               │   ├── ParallelPrefixProblem.java ✅
 │   │               │   ├── ConnectedComponentsProblem.java ✅
 │   │               │   ├── BellmanFordProblem.java ✅
-│   │               │   ├── JohnsonProblem.java (TODO)
+│   │               │   ├── JohnsonProblem.java ✅
 │   │               │   └── BoruvkaProblem.java ✅
 │   │               └── examples/          # Example usage
-│   │                   └── SimpleLLPExample.java
+│   │                   └── SimpleLLPExample.java ✅
 │   └── test/
 │       └── java/
 │           └── com/
@@ -51,23 +53,52 @@ LLP-Java-Algorithms/
 └── test.sh                                # Test script
 ```
 
-## Implemented Problems
+## Implemented Problems (All Complete! ✅)
 
-### ✅ **Boruvka's Minimum Spanning Tree Algorithm** (`BoruvkaProblem.java`)
-Complete implementation of Boruvka's MST algorithm using the LLP framework.
+### ✅ **Stable Marriage Problem** (`StableMarriageProblem.java`)
+Parallel implementation of the stable marriage matching algorithm.
 
 **Features:**
-- Recursive and LLP parallel implementations
-- Union-Find data structure with path compression
-- Symmetry breaking for cycle prevention
-- Graph reduction for component abstraction
-- Performance testing with multiple thread counts
+- Parallel proposal and rejection system
+- Stability constraint verification
+- Multiple test cases with different preference configurations
+- Round-robin thread distribution for unmatched participants
 
 **Key Concepts Demonstrated:**
-- **Forbidden**: Detects when `G[j] ≠ G[G[j]]` (Union-Find compression violations)
-- **Ensure**: Applies path compression to fix parent array inconsistencies
-- **Advance**: Performs edge selection, parent assignment, and graph reduction
-- **Merge**: Combines MST edges from parallel threads
+- **Forbidden**: Detects unstable pairs where both parties prefer each other over current matches
+- **Ensure**: Fixes unstable pairs by reassigning matches based on preferences
+- **Advance**: Enables unmatched men to propose to preferred women in parallel
+- **Merge**: Combines partial matchings from different threads, resolving conflicts by preference
+
+### ✅ **Parallel Prefix Problem** (`ParallelPrefixProblem.java`)
+Parallel computation of prefix sums using the LLP framework.
+
+**Features:**
+- Stride-based parallel prefix computation
+- Multiple operation types (sum, product, etc.)
+- Correctness verification with sequential comparison
+- Educational demonstration of parallel scan algorithms
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects incomplete or incorrect prefix computations
+- **Ensure**: Fixes prefix value inconsistencies
+- **Advance**: Performs parallel prefix computation steps with increasing strides
+- **Merge**: Combines prefix computation progress from parallel threads
+
+### ✅ **Johnson's All-Pairs Shortest Path** (`JohnsonProblem.java`)
+Complete implementation of Johnson's algorithm for all-pairs shortest paths.
+
+**Features:**
+- Multi-phase algorithm: Bellman-Ford reweighting, Dijkstra computation, distance adjustment
+- Handles negative edge weights through graph reweighting
+- Parallel computation across algorithm phases
+- Phase-based state management and progression
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects incomplete computations in current algorithm phase
+- **Ensure**: Fixes distance estimates using appropriate algorithms per phase
+- **Advance**: Progresses through algorithm phases with parallel vertex processing
+- **Merge**: Combines shortest path computations from parallel threads
 
 ### ✅ **Connected Components Problem** (`ConnectedComponentsProblem.java`)
 Parallel algorithm for finding connected components in an undirected graph.
@@ -99,10 +130,102 @@ Shortest path algorithm that handles negative edge weights.
 - **Advance**: Relaxes edges to improve distance estimates
 - **Merge**: Combines shortest distance estimates
 
+### ✅ **Boruvka's Minimum Spanning Tree Algorithm** (`BoruvkaProblem.java`)
+Complete implementation of Boruvka's MST algorithm using the LLP framework.
+
+**Features:**
+- Recursive and LLP parallel implementations
+- Union-Find data structure with path compression
+- Symmetry breaking for cycle prevention
+- Graph reduction for component abstraction
+- Performance testing with multiple thread counts
+
+**Key Concepts Demonstrated:**
+- **Forbidden**: Detects when `G[j] ≠ G[G[j]]` (Union-Find compression violations)
+- **Ensure**: Applies path compression to fix parent array inconsistencies
+- **Advance**: Performs edge selection, parent assignment, and graph reduction
+- **Merge**: Combines MST edges from parallel threads
+
+### ✅ **Simple LLP Example** (`SimpleLLPExample.java`)
+Educational example demonstrating parallel array maximum finding.
+
+**Features:**
+- Clear demonstration of LLP framework usage
+- Array segmentation for parallel processing
+- Step-by-step execution visualization
+- Framework API demonstration
+
+## Building and Running
+
+### Prerequisites
+- Java 11 or higher
+- Maven 3.6 or higher
+
+### Using Maven
+
+#### Build the Project
+```bash
+# Using Maven directly
+mvn clean compile
+
+# Using provided script
+./build.sh
+```
+
+#### Run Tests
+```bash
+# Using Maven
+mvn test
+
+# Using provided script
+./test.sh
+```
+
+### Running Individual Problems
+
+Each problem can be executed independently:
+
+#### Stable Marriage Problem
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.StableMarriageProblem"
+```
+
+#### Parallel Prefix Problem
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.ParallelPrefixProblem"
+```
+
+#### Johnson's Algorithm
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.JohnsonProblem"
+```
+
+#### Connected Components
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.ConnectedComponentsProblem"
+```
+
+#### Bellman-Ford Algorithm
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.BellmanFordProblem"
+```
+
+#### Boruvka's Algorithm
+```bash
+mvn exec:java -Dexec.mainClass="com.llp.problems.BoruvkaProblem"
+```
+
+### Alternative Direct Compilation
+```bash
+# Compile and run any problem directly
+javac -cp target/classes src/main/java/com/llp/problems/[ProblemName].java
+java -cp target/classes com.llp.problems.[ProblemName]
+```
+
 ## Simplified Architecture
 
 **✅ Simplified Components:**
-- **LLPEngine** - Now uses Java 8+ parallel streams for coordination
+- **LLPEngine** - Uses Java 8+ parallel streams for coordination
 - **LLPSolver** - Clean constructors with direct parameters
 - **Problem implementations** - Focus purely on algorithm logic
 
@@ -135,27 +258,11 @@ This separation ensures that:
 
 ### The Three Core Methods
 
-When implementing a problem using the LLP framework, you need to define these three methods:
-
 #### 1. **Forbidden(state) → boolean**
 This predicate determines if a given configuration is invalid or violates problem constraints.
 
-**Purpose**: 
-- Detect states that violate problem invariants
-- Identify configurations that need correction
-
-**Example use cases**:
-- In Boruvka MST: Check if `G[j] ≠ G[G[j]]` (Union-Find compression violations)
-- In Bellman-Ford: Check if distances violate triangle inequality
-- In Connected Components: Check if component labels are inconsistent
-
 #### 2. **Ensure(state, threadId, totalThreads) → state**
 This operation modifies the state to satisfy local constraints and remove forbidden configurations.
-
-**Purpose**:
-- Fix states that violate constraints
-- Maintain problem invariants
-- Ensure forward progress doesn't create permanent violations
 
 **Key Features**:
 - **Thread Distribution**: Uses `threadId` and `totalThreads` for parallel work distribution
@@ -164,16 +271,6 @@ This operation modifies the state to satisfy local constraints and remove forbid
 
 #### 3. **Advance(state, threadId, totalThreads) → state**
 This operation moves the state forward toward the solution, potentially creating new forbidden configurations.
-
-**Purpose**:
-- Make progress toward the solution
-- Explore the solution space
-- Move up in the lattice ordering
-
-**Key Features**:
-- **Parallel Execution**: Each thread processes different parts of the problem
-- **Progress Focus**: Focus on advancement, not constraint satisfaction
-- **Thread Safety**: Uses immutable state pattern for safe parallel execution
 
 ## Quick Start
 
@@ -289,88 +386,6 @@ for (int i = threadId; i < workItems.length; i += totalThreads) {
 LLPSolver<State> solver = new LLPSolver<>(problem, 4, 100);  // 4 threads, 100 max iterations
 ```
 
-## Running Implemented Problems
-
-### Boruvka's Algorithm
-```bash
-# Compile and run
-javac -cp . src/main/java/com/llp/problems/BoruvkaProblem.java
-java -cp . com.llp.problems.BoruvkaProblem
-```
-
-### Connected Components
-```bash
-# Compile and run
-javac -cp . src/main/java/com/llp/problems/ConnectedComponentsProblem.java
-java -cp . com.llp.problems.ConnectedComponentsProblem
-```
-
-### Bellman-Ford Algorithm
-```bash
-# Compile and run
-javac -cp . src/main/java/com/llp/problems/BellmanFordProblem.java
-java -cp . com.llp.problems.BellmanFordProblem
-```
-
-## Remaining Problems to Implement
-
-1. **Stable Marriage Problem** (`StableMarriageProblem.java`)
-2. **Parallel Prefix Problem** (`ParallelPrefixProblem.java`)  
-3. **Johnson's Algorithm** (`JohnsonProblem.java`)
-
-### Implementation Template
-
-Each problem follows this pattern:
-
-```java
-// 1. State class (your data structure)
-class YourState {
-    final SomeType data;  // Immutable fields
-    
-    public YourState withData(SomeType newData) {
-        return new YourState(newData);  // Immutable pattern
-    }
-}
-
-// 2. Problem class (your algorithm)
-class YourProblem implements LLPProblem<YourState> {
-    public boolean Forbidden(YourState state) { /* constraint check */ }
-    public YourState Ensure(YourState state, int threadId, int totalThreads) { /* fix violations */ }
-    public YourState Advance(YourState state, int threadId, int totalThreads) { /* make progress */ }
-    public YourState getInitialState() { /* starting point */ }
-    public boolean isSolution(YourState state) { /* done check */ }
-}
-
-// 3. Main method (solve it)
-public static void main(String[] args) {
-    YourProblem problem = new YourProblem(/* parameters */);
-    LLPSolver<YourState> solver = new LLPSolver<>(problem);
-    YourState solution = solver.solve();
-    solver.shutdown();
-}
-```
-
-## Building and Running
-
-### Prerequisites
-- Java 11 or higher
-- Maven 3.6 or higher
-
-### Build the Project
-```bash
-./build.sh
-```
-
-### Run Example
-```bash
-./run_example.sh
-```
-
-### Run Tests
-```bash
-./test.sh
-```
-
 ## Framework Benefits
 
 ### 🚀 **Automatic Parallelization**
@@ -401,28 +416,28 @@ Initialize State
 ┌─────────────────────────┐
 │ For each iteration      │←──────┐
 └─────────────────────────┘       │
-     ↓                             │
+     ↓                            │
 ┌─────────────────────────┐       │
 │ Parallel Advance        │       │
 │ (Java Streams)          │       │
 │ Each thread: threadId   │       │
 └─────────────────────────┘       │
-     ↓                             │
+     ↓                            │
 ┌─────────────────────────┐       │
 │ Merge thread results    │       │
 └─────────────────────────┘       │
-     ↓                             │
+     ↓                            │
 ┌─────────────────────────┐       │
 │ Parallel Ensure         │       │
 │ (Java Streams)          │       │
 │ Fix violations          │       │
 └─────────────────────────┘       │
-     ↓                             │
+     ↓                            │
 ┌─────────────────────────┐       │
 │ Check Convergence       │       │
 │ isSolution(state)       │       │
 └─────────────────────────┘       │
-     ↓                             │
+     ↓                            │
    Continue ──────────────────────┘
      ↓
    Done
@@ -430,6 +445,21 @@ Initialize State
   Return Solution
 ```
 
+## Project Status
+
+**🎉 Project Complete!** All 6 problems have been successfully implemented using the LLP framework:
+
+1. ✅ **Stable Marriage Problem** - Complete with parallel proposal system
+2. ✅ **Parallel Prefix Problem** - Complete with stride-based computation  
+3. ✅ **Johnson's Algorithm** - Complete with multi-phase parallel execution
+4. ✅ **Connected Components** - Complete with label propagation
+5. ✅ **Bellman-Ford Algorithm** - Complete with edge relaxation
+6. ✅ **Boruvka's MST Algorithm** - Complete with Union-Find optimization
+
+Each implementation demonstrates the power and flexibility of the LLP framework for parallel algorithm development.
+
 ## License
 
 This project is for educational purposes as part of a parallel algorithms course assignment.
+
+**Authors:** Isaac Shepherd and Aaron Christson
