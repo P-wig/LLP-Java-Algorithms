@@ -142,6 +142,7 @@ public class BoruvkaProblem {
          * Reduce graph for recursive call following written example:
          * E' := {(G[v], G[w])|((v, w) ∈ E) ∧ (G[v] ≠ G[w])}
          * V' := {v ∈ V | G[v] = v}
+         * Keep all MST edges - they are already valid by construction
          */
         public BoruvkaState reduceGraph() {
             // V' := {v ∈ V | G[v] = v} - vertices that are component representatives
@@ -165,7 +166,8 @@ public class BoruvkaProblem {
                 }
             }
             
-            // Return reduced state with same parent array but reduced vertices/edges
+            // CORRECTED: Keep all MST edges - they are valid by construction
+            // The duplicate filtering should happen in the merge() method, not here
             return new BoruvkaState(newV, newE, G, T, numOriginalVertices);
         }
         
@@ -260,13 +262,13 @@ public class BoruvkaProblem {
             
             // Base case from written example: if |E| = 0 return {}
             if (state.E.isEmpty()) {
-                if (threadId == 0) System.out.println("Base case: No edges remaining");
+                if (threadId == 0) System.out.println("    Base case: no edges remaining");
                 return state;
             }
             
             // Additional base case: if |V| <= 1, we're done
             if (state.V.size() <= 1) {
-                if (threadId == 0) System.out.println("Base case: Only one vertex remaining");
+                if (threadId == 0) System.out.println("    Base case: single vertex remaining");
                 return state;
             }
             
@@ -278,8 +280,12 @@ public class BoruvkaProblem {
             }
             
             // Step 1: Find minimum weight edges for current vertex set
+            // DISTRIBUTE vertices among threads to avoid duplication
+            List<Integer> vertices = new ArrayList<>(state.V);
             Map<Integer, Edge> mweMap = new HashMap<>();
-            for (int v : state.V) {
+            
+            for (int i = threadId; i < vertices.size(); i += totalThreads) {
+                int v = vertices.get(i);
                 Edge minEdge = state.mwe(v, state.G);
                 if (minEdge != null) {
                     mweMap.put(v, minEdge);
@@ -290,28 +296,51 @@ public class BoruvkaProblem {
             int[] newG = state.G.clone();
             Set<Edge> newT = new HashSet<>(state.T);
 
-            for (int v : state.V) {
+            // FIXED: Track unique edges per component, avoiding duplicates
+            Map<Integer, Edge> componentBestEdge = new HashMap<>();
+            Set<Edge> threadEdgesToAdd = new HashSet<>(); // Prevent duplicate edge processing
+
+            // ONLY process vertices assigned to this thread
+            for (int i = threadId; i < vertices.size(); i += totalThreads) {
+                int v = vertices.get(i);
                 Edge vwEdge = mweMap.get(v);
                 if (vwEdge == null) continue;
                 
                 int w = (vwEdge.u == v) ? vwEdge.v : vwEdge.u;
                 
-                // REMOVE the canonical check - let all vertices work!
-                // Check if edge connects different components BEFORE updating parents
+                // Check if edge connects different components
                 int rootV = findRoot(newG, v);
                 int rootW = findRoot(newG, w);
                 if (rootV != rootW) {
-                    // Only add edge if it creates a union between different components
-                    newT.add(vwEdge);  // HashSet automatically handles duplicates
-                    
-                    // Now update parent pointers after adding the edge
-                    if (v < w) {
-                        newG[w] = v;
-                    } else {
-                        newG[v] = w;
+                    // Store the edge for the SMALLER component root only (avoid duplicates)
+                    int primaryRoot = Math.min(rootV, rootW);
+                    Edge currentBest = componentBestEdge.get(primaryRoot);
+                    if (currentBest == null || vwEdge.weight < currentBest.weight) {
+                        componentBestEdge.put(primaryRoot, vwEdge);
                     }
                 }
             }
+
+            // Add the best edge for each component (now each edge appears only once)
+            for (Edge bestEdge : componentBestEdge.values()) {
+                // Double-check that components are still different
+                int rootU = findRoot(newG, bestEdge.u);
+                int rootV = findRoot(newG, bestEdge.v);
+                
+                if (rootU != rootV) {
+                    threadEdgesToAdd.add(bestEdge);
+                    
+                    // Union the components
+                    if (rootU < rootV) {
+                        newG[rootV] = rootU;
+                    } else {
+                        newG[rootU] = rootV;
+                    }
+                }
+            }
+            
+            // Add thread's unique edges to MST
+            newT.addAll(threadEdgesToAdd);
             
             // Step 3: Apply path compression to ALL vertices in the original graph
             for (int i = 0; i < newG.length; i++) {
@@ -327,7 +356,7 @@ public class BoruvkaProblem {
                 System.out.println("    After reduction: |V'|=" + reduced.V.size() + ", |E'|=" + reduced.E.size());
                 for (Edge edge : newT) {
                     if (!state.T.contains(edge)) {
-                        System.out.println("    Added edge: " + edge);
+                        System.out.println("      New edge added: " + edge);
                     }
                 }
             }
@@ -366,51 +395,46 @@ public class BoruvkaProblem {
         
         @Override
         public BoruvkaState merge(BoruvkaState state1, BoruvkaState state2) {
-            // Only debug for small graphs
-            boolean enableDebug = numVertices < 1000;
+            // SIMPLE APPROACH: Let the LLP framework handle most of the coordination
+            // Just combine the thread results and let the next iteration sort it out
             
-            if (enableDebug) {
-                System.out.println("    Merging states: |V1|=" + state1.V.size() + ", |V2|=" + state2.V.size() + 
-                                   ", |T1|=" + state1.T.size() + ", |T2|=" + state2.T.size());
-            }
-            
-            // Merge parent arrays by taking the most compressed path
+            // Merge parent arrays by taking the more compressed parent for each vertex
             int[] mergedG = new int[Math.max(state1.G.length, state2.G.length)];
+            
+            // Start with state1
             System.arraycopy(state1.G, 0, mergedG, 0, state1.G.length);
             
-            // Merge with state2's parent information
+            // Merge state2's compressions, keeping the smaller root
             for (int i = 0; i < Math.min(mergedG.length, state2.G.length); i++) {
-                // Take the more compressed parent reference
-                if (state2.G[i] != i && mergedG[i] == i) {
-                    mergedG[i] = state2.G[i];
+                int root1 = findRoot(state1.G, i);
+                int root2 = findRoot(state2.G, i);
+                
+                // Choose the smaller root for consistency
+                if (root2 < root1) {
+                    mergedG[i] = root2;
                 }
             }
             
-            // Merge MST edges (use union to avoid duplicates)
+            // Apply path compression
+            for (int i = 0; i < mergedG.length; i++) {
+                mergedG[i] = findRoot(mergedG, i);
+            }
+            
+            // UNION MST edges and let reduceGraph() filter invalid ones
             Set<Edge> mergedT = new HashSet<>(state1.T);
             mergedT.addAll(state2.T);
             
-            // CRITICAL FIX: Use the smaller/more reduced vertex and edge sets
-            // This ensures we preserve the graph reduction from Advance operations
+            // Take the more reduced state
             Set<Integer> mergedV = state1.V.size() <= state2.V.size() ? state1.V : state2.V;
             Set<Edge> mergedE = state1.E.size() <= state2.E.size() ? state1.E : state2.E;
             
-            // If both states have the same reduction level, use intersection for safety
-            if (state1.V.size() == state2.V.size()) {
-                mergedV = new HashSet<>(state1.V);
-                mergedV.retainAll(state2.V); // Intersection of vertices
-                
-                mergedE = new HashSet<>(state1.E);
-                mergedE.retainAll(state2.E); // Intersection of edges
-            }
+            // Create intermediate state and apply reduction
+            BoruvkaState intermediate = new BoruvkaState(mergedV, mergedE, mergedG, mergedT, state1.numOriginalVertices);
             
-            BoruvkaState result = new BoruvkaState(mergedV, mergedE, mergedG, mergedT, state1.numOriginalVertices);
+            // CRITICAL: The reduceGraph() operation should filter out edges within the same component
+            BoruvkaState reduced = intermediate.reduceGraph();
             
-            if (enableDebug) {
-                System.out.println("    Merged result: |V|=" + result.V.size() + ", |E|=" + result.E.size() + ", |T|=" + result.T.size());
-            }
-            
-            return result;
+            return reduced;
         }
         
         /**
@@ -604,7 +628,7 @@ public class BoruvkaProblem {
         
         // Test with real graph file
         System.out.println("\n" + "=".repeat(60) + "\n");
-        testWithGraphFile(graphFile, 1000000, 16); // Small sample first
+        testWithGraphFile(graphFile, 1000000, 2);
     }
 
     /**

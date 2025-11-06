@@ -172,14 +172,15 @@ public class GraphFileReader {
             // Convert to edge list with adaptive progress reporting
             System.out.println("Converting ECL format to edge list...");
             List<Edge> edgeList = new ArrayList<>();
-            
+            Set<String> seenEdges = new HashSet<>(); // Track edges we've already added
+
             // Process all vertices in the file
             int processedVertices = nodes;
             System.out.printf("Processing all %,d vertices from the graph file\n", processedVertices);
-            
+
             // Determine appropriate progress interval based on graph size
             int progressInterval = getProgressInterval(edges);
-            
+
             for (int src = 0; src < processedVertices; src++) {
                 int start = nindex[src];
                 int end = nindex[src + 1];
@@ -189,12 +190,21 @@ public class GraphFileReader {
                     
                     int dst = nlist[i];
                     
-                    double weight = (eweight != null) ? eweight[i] : 1.0;
-                    edgeList.add(new Edge(src, dst, weight));
+                    // For undirected graphs, only add each edge once
+                    // Create a canonical edge representation (smaller vertex first)
+                    int u = Math.min(src, dst);
+                    int v = Math.max(src, dst);
+                    String edgeKey = u + "," + v;
                     
-                    // Adaptive progress reporting
-                    if (edgeList.size() % progressInterval == 0) {
-                        System.out.printf("  Converted %,d edges...\n", edgeList.size());
+                    if (!seenEdges.contains(edgeKey)) {
+                        double weight = (eweight != null) ? eweight[i] : 1.0;
+                        edgeList.add(new Edge(u, v, weight));
+                        seenEdges.add(edgeKey);
+                        
+                        // Adaptive progress reporting
+                        if (edgeList.size() % progressInterval == 0) {
+                            System.out.printf("  Converted %,d edges...\n", edgeList.size());
+                        }
                     }
                 }
             }
