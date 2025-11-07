@@ -97,7 +97,6 @@ public class GraphFileReader {
             }
             
             // Calculate expected file size
-            long expectedSize = 8 + (long)(nodes + 1) * 4 + (long)edges * 4 + (long)edges * 4; // header + nindex + nlist + eweight
             long minExpectedSize = 8 + (long)(nodes + 1) * 4 + (long)edges * 4; // without weights
             
             if (file.length() < minExpectedSize) {
