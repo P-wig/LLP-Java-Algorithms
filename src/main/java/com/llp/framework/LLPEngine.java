@@ -1,11 +1,11 @@
 package com.llp.framework;
 
 import com.llp.algorithm.LLPProblem;
-import java.util.stream.IntStream;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Minimal streams-based execution engine for parallel LLP algorithms.
+ * Minimal execution engine for parallel LLP algorithms.
  * 
  * Uses the unified LLP interface where all operations accept threadId and totalThreads
  * parameters, enabling seamless single-threaded and multi-threaded execution.
@@ -15,6 +15,7 @@ public class LLPEngine<T> {
     private final LLPProblem<T> problem;
     private final int parallelism;
     private final int maxIterations;
+    private ExecutorService executor;
     
     // Simple termination tracking
     private int iterationCount = 0;
@@ -24,90 +25,74 @@ public class LLPEngine<T> {
         this.problem = problem;
         this.parallelism = parallelism;
         this.maxIterations = maxIterations;
-        
-        // Set parallelism for streams
-        System.setProperty("java.util.concurrent.ForkJoinPool.common.parallelism", 
-                          String.valueOf(parallelism));
+        this.executor = parallelism > 1 ? Executors.newFixedThreadPool(parallelism) : null;
     }
     
     /**
-     * Execute using streams-based parallel approach with unified interface.
+     * Execute the LLP algorithm: only advance forbidden states.
      */
     public T execute(T initialState) {
-        AtomicReference<T> currentState = new AtomicReference<>(initialState);
-        T previousState = initialState;
-        
-        System.out.println("Starting LLP execution with " + parallelism + " threads...");
+        T currentState = initialState;
         
         for (iterationCount = 0; iterationCount < maxIterations; iterationCount++) {
-            
-            T current = currentState.get();  // Get current state
-            
-            // Check if current state is forbidden
-            if (problem.Forbidden(current)) {
-                // Fix violations with parallel Ensure using unified interface
-                T afterEnsure = IntStream.range(0, parallelism)
-                    .parallel()
-                    .mapToObj(threadId -> problem.Ensure(current, threadId, parallelism))
-                    .reduce(current, problem::merge);
-                currentState.set(afterEnsure);
-                
-                System.out.println("  Iteration " + iterationCount + ": Fixed forbidden state");
-                
-            } else {
-                // Make progress with parallel Advance using unified interface
-                T afterAdvance = IntStream.range(0, parallelism)
-                    .parallel()
-                    .mapToObj(threadId -> {
-                        // Each thread works on different part using unified interface
-                        return problem.Advance(current, threadId, parallelism);
-                    })
-                    .reduce(current, problem::merge);
-                currentState.set(afterAdvance);
-                
-                // Check if Advance created violations and fix them
-                T advanced = currentState.get();
-                if (problem.Forbidden(advanced)) {
-                    T afterEnsure = IntStream.range(0, parallelism)
-                        .parallel()
-                        .mapToObj(threadId -> problem.Ensure(advanced, threadId, parallelism))
-                        .reduce(advanced, problem::merge);
-                    currentState.set(afterEnsure);
-                    
-                    System.out.println("Iteration " + iterationCount + ": Advanced then fixed violation");
-                } else {
-                    System.out.println("Iteration " + iterationCount + ": Advanced without violation");
-                }
-            }
-            
-            // Check for solution - get fresh state reference
-            T finalState = currentState.get();
-            if (problem.isSolution(finalState)) {
-                System.out.println("Solution found at iteration " + iterationCount);
+            // Only advance if the state is forbidden
+            if (!problem.Forbidden(currentState)) {
                 converged = true;
-                break;
+                return currentState;
             }
             
-            // Check for convergence (no progress)
-            if (finalState.equals(previousState)) {
-                System.out.println("Converged (no change) at iteration " + iterationCount);
-                converged = true;
-                break;
-            }
-            
-            previousState = finalState;  // Update for next iteration
+            // Apply Advance to fix the forbidden state
+            currentState = advanceInParallel(currentState);
         }
         
-        if (!converged) {
-            System.out.println("Reached max iterations: " + maxIterations);
+        return currentState;
+    }
+    
+    /**
+     * Coordinate TRUE parallel execution.
+     */
+    private T advanceInParallel(T initialState) {
+        if (parallelism == 1) {
+            return problem.Advance(initialState, 0, 1);
         }
         
-        return currentState.get();
+        // ALL threads work on the SAME state object
+        CompletableFuture<Void>[] futures = new CompletableFuture[parallelism];
+        
+        for (int threadId = 0; threadId < parallelism; threadId++) {
+            final int id = threadId;
+            futures[id] = CompletableFuture.runAsync(() -> {
+                // Each thread modifies the SAME state object
+                problem.Advance(initialState, id, parallelism);
+            }, executor);
+        }
+        
+        // Wait for all threads to complete
+        try {
+            CompletableFuture.allOf(futures).get();
+            return initialState; // Return the SAME object (now modified)
+            
+        } catch (Exception e) {
+            throw new RuntimeException("Error in parallel execution", e);
+        }
     }
     
     // Getters for statistics
     public int getIterationCount() { return iterationCount; }
     public boolean hasConverged() { return converged; }
     public int getNumThreads() { return parallelism; }
-    public void shutdown() { /* No cleanup needed for streams */ }
+    
+    public void shutdown() { 
+        if (executor != null && !executor.isShutdown()) {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
 }

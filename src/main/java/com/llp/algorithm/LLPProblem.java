@@ -98,131 +98,25 @@ package com.llp.algorithm;
  * @see com.llp.framework.LLPEngine
  */
 public interface LLPProblem<T> {
-    
     /**
-     * The Forbidden predicate determines if a given configuration violates problem constraints.
-     * 
-     * <p>This method is called frequently by the framework to detect when the state
-     * violates problem invariants. It should be efficient and thread-safe.
-     * 
-     * <p><b>Implementation Requirements:</b>
-     * <ul>
-     *   <li>Must be thread-safe (read-only access to state)</li>
-     *   <li>Should return true if and only if constraints are violated</li>
-     *   <li>Should be deterministic for the same state</li>
-     *   <li>Performance-critical: called many times during execution</li>
-     * </ul>
-     * 
-     * @param state The current state/configuration to check
-     * @return true if the state is forbidden (violates constraints), false otherwise
+     * Check if state violates constraints
      */
     boolean Forbidden(T state);
     
     /**
-     * The Ensure operation fixes constraint violations for this thread's partition.
-     * 
-     * <p>This method is called after Advance to repair any violations introduced.
-     * Each thread should work on a subset of the violations or problem space,
-     * using the threadId and totalThreads to partition the work.
-     * 
-     * <p><b>Implementation Requirements:</b>
-     * <ul>
-     *   <li>Must fix violations detected by Forbidden for this thread's partition</li>
-     *   <li>Should be idempotent: Ensure(Ensure(s, tid, total), tid, total) = Ensure(s, tid, total)</li>
-     *   <li>Must maintain monotonic progress in the lattice</li>
-     *   <li>Should return the same state if no violations exist in this partition</li>
-     * </ul>
-     * 
-     * <p><b>Single-threaded usage:</b> Call with threadId=0, totalThreads=1
-     * 
-     * @param state The current state to be modified
-     * @param threadId The ID of this thread (0-based)
-     * @param totalThreads The total number of threads
-     * @return The updated state with constraint violations fixed for this partition
-     */
-    T Ensure(T state, int threadId, int totalThreads);
-    
-    /**
-     * The Advance operation moves the state toward the solution for this thread's partition.
-     * 
-     * <p>This method makes progress on the problem by updating the state,
-     * potentially creating new forbidden configurations that will be fixed
-     * by subsequent Ensure operations. Each thread should work on a subset
-     * of the problem space.
-     * 
-     * <p><b>Implementation Requirements:</b>
-     * <ul>
-     *   <li>Should make clear, measurable progress toward the solution</li>
-     *   <li>May create forbidden states (that's expected and OK)</li>
-     *   <li>Must eventually lead to convergence when alternated with Ensure</li>
-     *   <li>Should advance in the lattice ordering</li>
-     *   <li>Each thread processes only its assigned partition</li>
-     * </ul>
-     * 
-     * <p><b>Single-threaded usage:</b> Call with threadId=0, totalThreads=1
-     * 
-     * @param state The current state
-     * @param threadId The ID of this thread (0-based)
-     * @param totalThreads The total number of threads
-     * @return The advanced state with progress toward the solution for this partition
+     * Advance the state to fix forbidden conditions.
+     * Should only be called on forbidden states.
+     * After advancing, the state should no longer be forbidden.
      */
     T Advance(T state, int threadId, int totalThreads);
     
     /**
-     * Returns the initial state for the problem.
-     * 
-     * <p>This method is called once at the start of the algorithm to obtain
-     * the starting configuration. The initial state should represent the
-     * beginning of the problem (e.g., no matches in stable marriage,
-     * infinite distances in shortest path, etc.).
-     * 
-     * @return The starting state/configuration for the problem
+     * Get initial state
      */
     T getInitialState();
     
     /**
-     * Checks if the current state represents a valid solution to the problem.
-     * 
-     * <p>This method determines if the algorithm has reached a valid solution.
-     * Typically, a solution must satisfy all constraints (not Forbidden) and
-     * meet any completion criteria specific to the problem.
-     * 
-     * <p><b>Typical Implementation:</b>
-     * <pre>{@code
-     * return !Forbidden(state) && isComplete(state);
-     * }</pre>
-     * 
-     * @param state The current state to check
-     * @return true if the state is a valid solution, false otherwise
+     * Check if we have a complete solution
      */
     boolean isSolution(T state);
-
-    /**
-     * Merge results from parallel thread operations.
-     * 
-     * <p>This method combines the results from multiple threads after parallel
-     * Advance or Ensure operations. The implementation should intelligently
-     * merge the states, typically taking the "best" progress from each.
-     * 
-     * <p><b>Common Patterns:</b>
-     * <ul>
-     *   <li>Take minimum distances (shortest path problems)</li>
-     *   <li>Union of edges (MST problems)</li>
-     *   <li>Logical OR of boolean arrays (reachability problems)</li>
-     * </ul>
-     * 
-     * @param state1 Result from one thread
-     * @param state2 Result from another thread
-     * @return The merged state combining progress from both threads
-     */
-    default T merge(T state1, T state2) {
-        // Default: prefer non-forbidden states
-        if (Forbidden(state1) && !Forbidden(state2)) {
-            return state2;
-        }
-        if (!Forbidden(state1) && Forbidden(state2)) {
-            return state1;
-        }
-        return state2; // Both same constraint status, return either
-    }
 }

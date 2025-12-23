@@ -61,33 +61,38 @@ public class LLPSolver<T> {
      * Solves the problem using the parallel LLP algorithm framework.
      * 
      * @return The solution state
-     * @throws InterruptedException if the solving process is interrupted
-     * @throws ExecutionException if an error occurs during execution
+     * @throws RuntimeException if an error occurs during execution (simplified from checked exceptions)
      */
-    public T solve() throws InterruptedException, ExecutionException {
-        // Get initial state from problem
-        T initialState = problem.getInitialState();
-        
-        // Create and configure the engine
-        engine = new LLPEngine<>(problem, numThreads, maxIterations);
-        
-        // Execute the parallel LLP algorithm
-        T solution = engine.execute(initialState);
-        
-        return solution;
+    public T solve() {
+        try {
+            // Get initial state from problem
+            T initialState = problem.getInitialState();
+            
+            // Create and configure the engine
+            engine = new LLPEngine<>(problem, numThreads, maxIterations);
+            
+            // Execute the parallel LLP algorithm
+            T solution = engine.execute(initialState);
+            
+            return solution;
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to solve LLP problem", e);
+        }
     }
     
     /**
      * Gets execution statistics after solving.
      * 
-     * @return A simple object with iteration count and convergence status
+     * @return A simple object with iteration count and convergence status, or null if not solved yet
      */
     public ExecutionStats getExecutionStats() {
         if (engine == null) return null;
         return new ExecutionStats(engine.getIterationCount(), engine.hasConverged());
     }
 
-    // Simple stats class
+    /**
+     * Simple execution statistics.
+     */
     public static class ExecutionStats {
         public final int iterationCount;
         public final boolean converged;
@@ -99,6 +104,12 @@ public class LLPSolver<T> {
         
         public int getIterationCount() { return iterationCount; }
         public boolean hasConverged() { return converged; }
+        
+        @Override
+        public String toString() {
+            return String.format("ExecutionStats{iterations=%d, converged=%s}", 
+                               iterationCount, converged);
+        }
     }
     
     /**
