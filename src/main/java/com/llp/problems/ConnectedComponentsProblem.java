@@ -6,12 +6,18 @@ import com.llp.algorithm.LLPSolver;
 import java.util.*;
 
 /**
- * Connected Components Problem using the LLP framework (Fast Parallel Algorithm).
+ * Connected Components Problem using the simplified LLP framework.
  * 
- * <h3>Problem Description:</h3>
+ * Problem Description:
  * Find all connected components in an undirected graph. A connected component
  * is a maximal set of vertices such that there is a path between every pair
  * of vertices within the set.
+ * 
+ * LLP Implementation Strategy:
+ * - State: Component labels for each vertex using Union-Find
+ * - Forbidden: Any edge connects vertices with different labels
+ * - Advance: Propagate minimum labels along edges (NO MERGE NEEDED)
+ * - Parallelism: Different threads can process different edges simultaneously
  */
 public class ConnectedComponentsProblem {
     
@@ -45,62 +51,98 @@ public class ConnectedComponentsProblem {
     }
 
     /**
-     * State representation for Connected Components algorithm.
+     * Simplified state for Connected Components algorithm.
+     * Uses Union-Find with thread-safe operations.
      */
     static class ComponentState {
         final Edge[] edges;           // Graph edges (readonly)
-        final int[] labels;           // Component labels for each vertex
+        volatile int[] parent;        // Union-Find parent array - thread-safe
+        volatile int[] rank;          // Union-Find rank array for optimization
         final int numVertices;        // Number of vertices
+        final Object lock = new Object(); // Synchronization lock
         
         public ComponentState(int numVertices, Edge[] edges) {
             this.numVertices = numVertices;
             this.edges = edges.clone();
-            this.labels = new int[numVertices];
+            this.parent = new int[numVertices];
+            this.rank = new int[numVertices];
             
-            // Initialize: each vertex is its own component
+            // Initialize Union-Find: each vertex is its own parent
             for (int i = 0; i < numVertices; i++) {
-                labels[i] = i;
+                parent[i] = i;
+                rank[i] = 0;
             }
-        }
-        
-        public ComponentState(Edge[] edges, int[] labels, int numVertices) {
-            this.edges = edges.clone();
-            this.labels = labels.clone();
-            this.numVertices = numVertices;
-        }
-        
-        public ComponentState withUpdatedLabels(int[] newLabels) {
-            return new ComponentState(edges, newLabels, numVertices);
         }
         
         /**
-         * Merge this state with another state, taking the minimum component labels.
+         * Thread-safe find with path compression.
          */
-        public ComponentState mergeWith(ComponentState other) {
-            int[] newLabels = labels.clone();
+        public int findRoot(int vertex) {
+            if (vertex >= parent.length) return vertex;
             
-            for (int i = 0; i < numVertices; i++) {
-                newLabels[i] = Math.min(newLabels[i], other.labels[i]);
+            // Path compression
+            if (parent[vertex] != vertex) {
+                parent[vertex] = findRoot(parent[vertex]);
+            }
+            return parent[vertex];
+        }
+        
+        /**
+         * Thread-safe union of two components with rank optimization.
+         */
+        public synchronized boolean union(int u, int v) {
+            int rootU = findRoot(u);
+            int rootV = findRoot(v);
+            
+            if (rootU == rootV) {
+                return false; // Already in same component
             }
             
-            return new ComponentState(edges, newLabels, numVertices);
+            // Union by rank
+            if (rank[rootU] < rank[rootV]) {
+                parent[rootU] = rootV;
+            } else if (rank[rootU] > rank[rootV]) {
+                parent[rootV] = rootU;
+            } else {
+                parent[rootV] = rootU;
+                rank[rootU]++;
+            }
+            return true;
+        }
+        
+        /**
+         * Check if edge connects different components.
+         */
+        public boolean connectsDifferentComponents(Edge edge) {
+            return findRoot(edge.u) != findRoot(edge.v);
         }
         
         /**
          * Get the number of distinct components.
          */
         public int getComponentCount() {
-            Set<Integer> distinctLabels = new HashSet<>();
-            for (int label : labels) {
-                distinctLabels.add(label);
+            Set<Integer> roots = new HashSet<>();
+            for (int i = 0; i < numVertices; i++) {
+                roots.add(findRoot(i));
             }
-            return distinctLabels.size();
+            return roots.size();
+        }
+        
+        /**
+         * Get component labels (root representatives).
+         */
+        public int[] getComponentLabels() {
+            int[] labels = new int[numVertices];
+            for (int i = 0; i < numVertices; i++) {
+                labels[i] = findRoot(i);
+            }
+            return labels;
         }
         
         @Override
         public String toString() {
-            return String.format("Components{vertices=%d, edges=%d, components=%d, labels=%s}", 
-                               numVertices, edges.length, getComponentCount(), Arrays.toString(labels));
+            return String.format("Components{vertices=%d, edges=%d, components=%d}", 
+                               numVertices, edges.length, getComponentCount());
         }
         
         @Override
@@ -109,13 +151,13 @@ public class ConnectedComponentsProblem {
             if (!(obj instanceof ComponentState)) return false;
             ComponentState other = (ComponentState) obj;
             return numVertices == other.numVertices &&
-                   Arrays.equals(labels, other.labels) &&
+                   Arrays.equals(getComponentLabels(), other.getComponentLabels()) &&
                    Arrays.equals(edges, other.edges);
         }
     }
 
     /**
-     * Connected Components problem implementation using unified LLP framework.
+     * Connected Components problem using simplified LLP framework.
      */
     static class ConnectedComponentsLLPProblem implements LLPProblem<ComponentState> {
         
@@ -129,87 +171,32 @@ public class ConnectedComponentsProblem {
         
         @Override
         public boolean Forbidden(ComponentState state) {
-            // State is forbidden if any edge connects vertices with different labels
+            // State is forbidden if any edge connects vertices with different components
             for (Edge edge : state.edges) {
-                if (state.labels[edge.u] != state.labels[edge.v]) {
-                    return true; // Inconsistent component labels
+                if (state.connectsDifferentComponents(edge)) {
+                    return true; // Found disconnected components
                 }
             }
-            return false;
-        }
-        
-        @Override
-        public ComponentState Ensure(ComponentState state, int threadId, int totalThreads) {
-            // Fix inconsistent component labels by merging components
-            int[] newLabels = state.labels.clone();
-            boolean changed = false;
-            
-            // Distribute edges among threads using round-robin
-            for (int edgeIndex = threadId; edgeIndex < state.edges.length; edgeIndex += totalThreads) {
-                Edge edge = state.edges[edgeIndex];
-                
-                if (newLabels[edge.u] != newLabels[edge.v]) {
-                    // Merge components by assigning minimum label
-                    int minLabel = Math.min(newLabels[edge.u], newLabels[edge.v]);
-                    int maxLabel = Math.max(newLabels[edge.u], newLabels[edge.v]);
-                    
-                    System.out.println("    Thread-" + threadId + " merging components: " + 
-                                     maxLabel + " -> " + minLabel + " (edge " + edge + ")");
-                    
-                    // Update all vertices with maxLabel to minLabel
-                    for (int i = 0; i < newLabels.length; i++) {
-                        if (newLabels[i] == maxLabel) {
-                            newLabels[i] = minLabel;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            
-            return changed ? state.withUpdatedLabels(newLabels) : state;
+            return false; // All edges connect vertices in same components
         }
         
         @Override
         public ComponentState Advance(ComponentState state, int threadId, int totalThreads) {
-            // Propagate component labels along edges
-            int[] newLabels = state.labels.clone();
-            boolean changed = false;
+            // Each thread processes different edges - modifies the SAME state object
+            // NO new state created, NO merging needed!
             
             // Distribute edges among threads using round-robin
             for (int edgeIndex = threadId; edgeIndex < state.edges.length; edgeIndex += totalThreads) {
                 Edge edge = state.edges[edgeIndex];
                 
-                int minLabel = Math.min(state.labels[edge.u], state.labels[edge.v]);
-                
-                // Propagate minimum label to both vertices
-                if (newLabels[edge.u] > minLabel) {
-                    System.out.println("    Thread-" + threadId + " updating vertex " + edge.u + 
-                                     ": " + newLabels[edge.u] + " -> " + minLabel);
-                    newLabels[edge.u] = minLabel;
-                    changed = true;
-                }
-                
-                if (newLabels[edge.v] > minLabel) {
-                    System.out.println("    Thread-" + threadId + " updating vertex " + edge.v + 
-                                     ": " + newLabels[edge.v] + " -> " + minLabel);
-                    newLabels[edge.v] = minLabel;
-                    changed = true;
+                // If edge connects different components, union them
+                if (state.connectsDifferentComponents(edge)) {
+                    state.union(edge.u, edge.v);
                 }
             }
             
-            return changed ? state.withUpdatedLabels(newLabels) : state;
-        }
-        
-        @Override
-        public ComponentState merge(ComponentState state1, ComponentState state2) {
-            // Merge by taking minimum component labels
-            System.out.println("    Merging states: components1=" + state1.getComponentCount() + 
-                             ", components2=" + state2.getComponentCount());
-            
-            ComponentState merged = state1.mergeWith(state2);
-            
-            System.out.println("    Merged result: components=" + merged.getComponentCount());
-            return merged;
+            // Return the SAME state object (now modified)
+            return state;
         }
         
         @Override
@@ -219,7 +206,7 @@ public class ConnectedComponentsProblem {
         
         @Override
         public boolean isSolution(ComponentState state) {
-            // Solution when no constraint violations exist
+            // Solution when no edges connect different components
             return !Forbidden(state);
         }
     }
@@ -227,7 +214,7 @@ public class ConnectedComponentsProblem {
     public static void main(String[] args) {
         System.out.println("=== Connected Components Example ===\n");
         
-        // Example graph: 0-1-2  3-4  5-6-7-8
+        // Example graph: 0-1-2  3-4  5-6-7-8  9
         Edge[] edges = {
             // Component 1: vertices 0, 1, 2
             new Edge(0, 1),
@@ -246,67 +233,74 @@ public class ConnectedComponentsProblem {
         };
 
         int numVertices = 10;
-        int numThreads = 2;
+        int[] threadCounts = {1, 2, 4, 8};
         int maxIterations = 50;
         
-        // Create the problem
-        ConnectedComponentsLLPProblem problem = new ConnectedComponentsLLPProblem(numVertices, edges);
-        ComponentState initial = problem.getInitialState();
-        
         System.out.println("Problem: Find connected components in graph");
+        System.out.println("Graph: " + numVertices + " vertices, " + edges.length + " edges");
+        System.out.println("Expected components: {0,1,2}, {3,4}, {5,6,7,8}, {9}");
+        
         System.out.println("Graph edges:");
         for (Edge edge : edges) {
             System.out.println("  " + edge);
         }
-        System.out.println("Expected components: {0,1,2}, {3,4}, {5,6,7,8}, {9}");
-        System.out.println("Initial state: " + initial);
-        System.out.println("Threads: " + numThreads);
+        System.out.println();
         
-        // Solve using the LLP framework
-        solveProblem(problem, numThreads, maxIterations);
+        // Test different thread counts
+        for (int numThreads : threadCounts) {
+            solveProblem(numVertices, edges, numThreads, maxIterations);
+        }
     }
 
-    private static void solveProblem(ConnectedComponentsLLPProblem problem, int numThreads, int maxIterations) {
-        System.out.println("\n--- LLP Framework Solution ---");
-        
+    private static void solveProblem(int numVertices, Edge[] edges, int numThreads, int maxIterations) {
         LLPSolver<ComponentState> solver = null;
         
         try {
+            ConnectedComponentsLLPProblem problem = new ConnectedComponentsLLPProblem(numVertices, edges);
             solver = new LLPSolver<>(problem, numThreads, maxIterations);
             
-            System.out.println("Solving with LLP framework...");
-            
-            long startTime = System.currentTimeMillis();
+            long startTime = System.nanoTime();
             ComponentState solution = solver.solve();
-            long endTime = System.currentTimeMillis();
+            long endTime = System.nanoTime();
             
-            System.out.println("\n✓ Solution found!");
-            System.out.println("Component labels: " + Arrays.toString(solution.labels));
-            System.out.println("Number of components: " + solution.getComponentCount());
-            System.out.println("Execution time: " + (endTime - startTime) + "ms");
-            System.out.println("Is valid solution? " + problem.isSolution(solution));
-            System.out.println("Is forbidden? " + problem.Forbidden(solution));
+            // Show results in compact format
+            double timeMs = (endTime - startTime) / 1_000_000.0;
+            int iterations = solver.getExecutionStats().getIterationCount();
+            boolean valid = problem.isSolution(solution);
             
-            // Display components
-            Map<Integer, List<Integer>> components = new HashMap<>();
-            for (int i = 0; i < solution.labels.length; i++) {
-                components.computeIfAbsent(solution.labels[i], k -> new ArrayList<>()).add(i);
+            System.out.printf("Threads: %2d | Time: %8.2fms | Iterations: %3d | Valid: %s", 
+                             numThreads, timeMs, iterations, valid);
+            
+            // Show speedup relative to single thread
+            if (numThreads == 1) {
+                System.out.println(" | Speedup: 1.00x (baseline)");
+                baselineTime = timeMs;
+            } else {
+                double speedup = baselineTime / timeMs;
+                System.out.printf(" | Speedup: %.2fx\n", speedup);
             }
             
-            System.out.println("Components found:");
-            for (Map.Entry<Integer, List<Integer>> entry : components.entrySet()) {
-                System.out.println("  Component " + entry.getKey() + ": " + entry.getValue());
-            }
-            
-            // Get statistics
-            LLPSolver.ExecutionStats stats = solver.getExecutionStats();
-            if (stats != null) {
-                System.out.println("Total iterations: " + stats.getIterationCount());
-                System.out.println("Converged: " + stats.hasConverged());
+            // Show component details for first run only
+            if (numThreads == 1) {
+                int[] labels = solution.getComponentLabels();
+                
+                // Group vertices by component
+                Map<Integer, List<Integer>> components = new HashMap<>();
+                for (int i = 0; i < labels.length; i++) {
+                    components.computeIfAbsent(labels[i], k -> new ArrayList<>()).add(i);
+                }
+                
+                System.out.println("\nComponents found:");
+                for (Map.Entry<Integer, List<Integer>> entry : components.entrySet()) {
+                    Collections.sort(entry.getValue());
+                    System.out.println("  Component " + entry.getKey() + ": " + entry.getValue());
+                }
+                System.out.printf("Total components: %d\n", solution.getComponentCount());
+                System.out.println();
             }
             
         } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error with " + numThreads + " threads: " + e.getMessage());
             e.printStackTrace();
         } finally {
             if (solver != null) {
@@ -314,4 +308,7 @@ public class ConnectedComponentsProblem {
             }
         }
     }
+
+    // Store baseline time for speedup calculation
+    private static double baselineTime = 0.0;
 }
