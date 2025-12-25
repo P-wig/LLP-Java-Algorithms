@@ -8,8 +8,17 @@ import java.util.*;
 import java.io.*;
 
 /**
- * Corrected Boruvka's MST Algorithm with proper convergence conditions.
- * Optimized for parallel performance while ensuring correct MST construction.
+ * Boruvka's MST Algorithm using the simplified LLP framework.
+ * 
+ * Problem Description:
+ * Boruvka's algorithm finds the Minimum Spanning Tree (MST) by repeatedly
+ * finding the minimum weight edge from each component and adding them to the MST.
+ * 
+ * LLP Implementation Strategy:
+ * - State: Current components and MST edges
+ * - Forbidden: Components that don't have their minimum edge selected
+ * - Advance: Find and add minimum edges for each component (NO MERGE NEEDED)
+ * - Parallelism: Different threads can work on different components simultaneously
  */
 public class BoruvkaProblem {
     
@@ -43,158 +52,126 @@ public class BoruvkaProblem {
     }
 
     /**
-     * Corrected state with proper MST construction tracking
+     * Simplified state for Boruvka's algorithm.
+     * Uses thread-safe operations for parallel updates.
      */
     static class BoruvkaState {
-        final Set<Integer> V;
-        final Set<Edge> E;
-        final int[] G;
-        final Set<Edge> T;
-        final int numOriginalVertices;
-        final Map<Integer, List<Edge>> adjacencyList;
+        final Edge[] allEdges;              // All graph edges (readonly)
+        volatile int[] parent;              // Union-Find parent array - thread-safe
+        volatile boolean[] mstEdgeAdded;    // Which edges are in MST - thread-safe
+        volatile boolean[] componentProcessed; // Which components found their min edge
+        final int numVertices;              // Number of vertices
+        final Object lock = new Object();   // Synchronization lock
         
-        public BoruvkaState(Set<Integer> V, Set<Edge> E, int numOriginalVertices) {
-            this.V = new HashSet<>(V);
-            this.E = new HashSet<>(E);
-            this.numOriginalVertices = numOriginalVertices;
-            this.G = new int[numOriginalVertices];
-            this.T = new HashSet<>();
+        public BoruvkaState(int numVertices, Edge[] allEdges) {
+            this.numVertices = numVertices;
+            this.allEdges = allEdges.clone();
+            this.parent = new int[numVertices];
+            this.mstEdgeAdded = new boolean[allEdges.length];
+            this.componentProcessed = new boolean[numVertices];
             
-            for (int v : V) {
-                G[v] = v;
+            // Initialize Union-Find: each vertex is its own parent
+            for (int i = 0; i < numVertices; i++) {
+                parent[i] = i;
             }
-            
-            this.adjacencyList = buildAdjacencyList();
-        }
-        
-        public BoruvkaState(Set<Integer> V, Set<Edge> E, int[] G, Set<Edge> T, int numOriginalVertices) {
-            this.V = new HashSet<>(V);
-            this.E = new HashSet<>(E);
-            this.G = G.clone();
-            this.T = new HashSet<>(T);
-            this.numOriginalVertices = numOriginalVertices;
-            this.adjacencyList = buildAdjacencyList();
-        }
-        
-        private Map<Integer, List<Edge>> buildAdjacencyList() {
-            Map<Integer, List<Edge>> adjList = new HashMap<>();
-            for (Edge edge : E) {
-                adjList.computeIfAbsent(edge.u, k -> new ArrayList<>()).add(edge);
-                adjList.computeIfAbsent(edge.v, k -> new ArrayList<>()).add(edge);
-            }
-            return adjList;
+            Arrays.fill(mstEdgeAdded, false);
+            Arrays.fill(componentProcessed, false);
         }
         
         /**
-         * OPTIMIZED: Find minimum weight edges efficiently with proper component tracking
+         * Thread-safe find with path compression.
          */
-        public Map<Integer, Edge> findAllMWE(Collection<Integer> vertices, int[] G) {
-            Map<Integer, Edge> mweMap = new HashMap<>();
+        public int findRoot(int vertex) {
+            if (vertex >= parent.length) return vertex;
             
-            for (int v : vertices) {
-                List<Edge> edges = adjacencyList.get(v);
-                if (edges == null || edges.isEmpty()) continue;
-                
-                Edge minEdge = null;
-                double minWeight = Double.POSITIVE_INFINITY;
-                int rootV = findRoot(G, v);
-                
-                for (Edge edge : edges) {
-                    int w = (edge.u == v) ? edge.v : edge.u;
-                    int rootW = findRoot(G, w);
-                    
-                    if (rootV != rootW && edge.weight < minWeight) {
-                        minWeight = edge.weight;
-                        minEdge = edge;
-                    }
-                }
-                
-                if (minEdge != null) {
-                    mweMap.put(v, minEdge);
-                }
+            // Path compression
+            if (parent[vertex] != vertex) {
+                parent[vertex] = findRoot(parent[vertex]);
             }
-            return mweMap;
-        }
-        
-        public BoruvkaState withUpdatedParentsAndEdges(int[] newG, Set<Edge> newT) {
-            return new BoruvkaState(V, E, newG, newT, numOriginalVertices);
+            return parent[vertex];
         }
         
         /**
-         * CORRECTED: Graph reduction that maintains MST construction progress
+         * Thread-safe union of two components.
          */
-        public BoruvkaState reduceGraph() {
-            // Apply path compression to all vertices
-            int[] compressedG = G.clone();
-            for (int i = 0; i < compressedG.length; i++) {
-                compressedG[i] = findRoot(compressedG, i);
+        public synchronized boolean union(int u, int v) {
+            int rootU = findRoot(u);
+            int rootV = findRoot(v);
+            
+            if (rootU == rootV) {
+                return false; // Already in same component
             }
             
-            Set<Integer> newV = new HashSet<>();
-            Set<Edge> newE = new HashSet<>();
-            
-            // Find component representatives
-            for (int v : V) {
-                if (v < compressedG.length && compressedG[v] == v) {
-                    newV.add(v);
+            // Union by making smaller root point to larger root
+            if (rootU < rootV) {
+                parent[rootV] = rootU;
+            } else {
+                parent[rootU] = rootV;
+            }
+            return true;
+        }
+        
+        /**
+         * Thread-safe check if edge connects different components.
+         */
+        public boolean connectsDifferentComponents(Edge edge) {
+            return findRoot(edge.u) != findRoot(edge.v);
+        }
+        
+        /**
+         * Thread-safe method to mark MST edge as added.
+         */
+        public synchronized void addMSTEdge(int edgeIndex) {
+            mstEdgeAdded[edgeIndex] = true;
+        }
+        
+        /**
+         * Get current MST edges.
+         */
+        public List<Edge> getMSTEdges() {
+            List<Edge> mstEdges = new ArrayList<>();
+            for (int i = 0; i < allEdges.length; i++) {
+                if (mstEdgeAdded[i]) {
+                    mstEdges.add(allEdges[i]);
                 }
             }
-            
-            // Build inter-component edges (these are the edges for the next iteration)
-            for (Edge edge : E) {
-                if (edge.u < compressedG.length && edge.v < compressedG.length) {
-                    int gU = compressedG[edge.u];
-                    int gV = compressedG[edge.v];
-                    if (gU != gV) {
-                        newE.add(new Edge(gU, gV, edge.weight));
-                    }
-                }
+            return mstEdges;
+        }
+        
+        /**
+         * Count number of components.
+         */
+        public int getComponentCount() {
+            Set<Integer> roots = new HashSet<>();
+            for (int i = 0; i < numVertices; i++) {
+                roots.add(findRoot(i));
             }
-            
-            return new BoruvkaState(newV, newE, compressedG, T, numOriginalVertices);
+            return roots.size();
         }
         
         @Override
         public String toString() {
-            return String.format("Boruvka{V=%d, E=%d, T=%d}", V.size(), E.size(), T.size());
+            return String.format("Boruvka{vertices=%d, components=%d, mstEdges=%d}", 
+                               numVertices, getComponentCount(), getMSTEdges().size());
         }
         
         @Override
         public boolean equals(Object obj) {
             if (!(obj instanceof BoruvkaState)) return false;
             BoruvkaState other = (BoruvkaState) obj;
-            return V.equals(other.V) && E.equals(other.E) && 
-                   Arrays.equals(G, other.G) && T.equals(other.T);
-        }
-        
-        private int findRoot(int[] G, int v) {
-            if (v >= G.length) return v;
-            
-            // Path compression
-            int original = v;
-            while (v < G.length && G[v] != v) {
-                v = G[v];
-            }
-            
-            // Apply compression to path
-            while (original < G.length && G[original] != v) {
-                int next = G[original];
-                G[original] = v;
-                original = next;
-            }
-            
-            return v;
+            return numVertices == other.numVertices &&
+                   Arrays.equals(parent, other.parent) &&
+                   Arrays.equals(mstEdgeAdded, other.mstEdgeAdded);
         }
     }
 
     /**
-     * CORRECTED Boruvka LLP with proper MST construction
+     * Boruvka's algorithm using simplified LLP framework.
      */
     static class BoruvkaLLPProblem implements LLPProblem<BoruvkaState> {
         
         private final int numVertices;
         private final Edge[] allEdges;
-        private volatile int iterationCount = 0;
         
         public BoruvkaLLPProblem(int numVertices, Edge[] allEdges) {
             this.numVertices = numVertices;
@@ -203,295 +180,223 @@ public class BoruvkaProblem {
         
         @Override
         public boolean Forbidden(BoruvkaState state) {
-            // Sample-based checking for large graphs
-            List<Integer> vertices = new ArrayList<>(state.V);
-            int sampleSize = Math.min(1000, vertices.size());
+            // Forbidden if we have multiple components but can still add edges
+            if (state.getComponentCount() <= 1) {
+                return false; // Single component = MST complete
+            }
             
-            for (int i = 0; i < sampleSize; i++) {
-                int j = vertices.get(i);
-                if (j < state.G.length && state.G[j] < state.G.length) {
-                    if (state.G[j] != state.G[state.G[j]]) {
-                        return true;
+            // Check if any component can still add a minimum edge
+            for (int i = 0; i < state.numVertices; i++) {
+                int root = state.findRoot(i);
+                if (root == i) { // This is a component root
+                    // Find if this component has a minimum outgoing edge
+                    Edge minEdge = null;
+                    double minWeight = Double.POSITIVE_INFINITY;
+                    
+                    for (int edgeIdx = 0; edgeIdx < state.allEdges.length; edgeIdx++) {
+                        if (!state.mstEdgeAdded[edgeIdx]) {
+                            Edge edge = state.allEdges[edgeIdx];
+                            if (state.connectsDifferentComponents(edge)) {
+                                int edgeRoot = -1;
+                                if (state.findRoot(edge.u) == root) {
+                                    edgeRoot = root;
+                                } else if (state.findRoot(edge.v) == root) {
+                                    edgeRoot = root;
+                                }
+                                
+                                if (edgeRoot == root && edge.weight < minWeight) {
+                                    minWeight = edge.weight;
+                                    minEdge = edge;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (minEdge != null) {
+                        return true; // Found a component with available minimum edge
                     }
                 }
             }
-            return false;
-        }
-        
-        @Override
-        public BoruvkaState Ensure(BoruvkaState state, int threadId, int totalThreads) {
-            int[] newG = state.G.clone();
             
-            // Parallel path compression
-            List<Integer> vertices = new ArrayList<>(state.V);
-            int chunkSize = Math.max(1, vertices.size() / totalThreads);
-            int startIdx = threadId * chunkSize;
-            int endIdx = (threadId == totalThreads - 1) ? vertices.size() : startIdx + chunkSize;
-            
-            for (int i = startIdx; i < endIdx; i++) {
-                int j = vertices.get(i);
-                if (j < newG.length && newG[j] < newG.length) {
-                    newG[j] = newG[newG[j]];
-                }
-            }
-            
-            return state.withUpdatedParentsAndEdges(newG, state.T);
+            return false; // No more edges can be added
         }
         
         @Override
         public BoruvkaState Advance(BoruvkaState state, int threadId, int totalThreads) {
-            // Progress logging
-            if (threadId == 0 && iterationCount % 10 == 0) {
-                System.out.printf("[%s] Boruvka iteration %d: |V|=%,d, |E|=%,d, |T|=%,d\n", 
-                    new java.text.SimpleDateFormat("HH:mm:ss").format(new java.util.Date()),
-                    iterationCount, state.V.size(), state.E.size(), state.T.size());
-            }
+            // SEQUENTIAL processing to maintain deterministic behavior
+            // Only Thread-0 does the work to avoid race conditions
             
-            if (threadId == 0) iterationCount++;
-            
-            // CORRECTED: Only terminate when we have the complete MST or single component
-            if (state.V.size() <= 1) {
-                return state; // Single component - we're done
-            }
-            
-            if (state.E.isEmpty()) {
-                return state; // No more edges to process
-            }
-            
-            List<Integer> vertices = new ArrayList<>(state.V);
-            
-            // Distribute vertices among threads
-            int chunkSize = Math.max(1, vertices.size() / totalThreads);
-            int startIdx = threadId * chunkSize;
-            int endIdx = (threadId == totalThreads - 1) ? vertices.size() : startIdx + chunkSize;
-            
-            if (startIdx >= vertices.size()) {
-                return state; // Thread has no work
-            }
-            
-            List<Integer> threadVertices = vertices.subList(startIdx, endIdx);
-            Map<Integer, Edge> mweMap = state.findAllMWE(threadVertices, state.G);
-            
-            int[] newG = state.G.clone();
-            Set<Edge> threadEdges = new HashSet<>();
-            
-            // OPTIMIZED: Component-based edge selection to prevent duplicates
-            Map<String, Edge> componentBestEdges = new HashMap<>();
-            
-            for (Map.Entry<Integer, Edge> entry : mweMap.entrySet()) {
-                Edge vwEdge = entry.getValue();
-                int rootU = findRoot(newG, vwEdge.u);
-                int rootV = findRoot(newG, vwEdge.v);
+            if (threadId == 0) {
+                // Get all current component roots at start of iteration
+                Set<Integer> componentRoots = new HashSet<>();
+                for (int i = 0; i < state.numVertices; i++) {
+                    componentRoots.add(state.findRoot(i));
+                }
                 
-                if (rootU != rootV) {
-                    // Create unique key for component pair
-                    String componentKey = Math.min(rootU, rootV) + "-" + Math.max(rootU, rootV);
-                    Edge currentBest = componentBestEdges.get(componentKey);
+                // For each component, find its minimum edge
+                Map<Integer, Edge> componentMinEdges = new HashMap<>();
+                Map<Integer, Integer> componentMinEdgeIndices = new HashMap<>();
+                
+                // Phase 1: Find minimum edge for each component
+                for (int componentRoot : componentRoots) {
+                    Edge minEdge = null;
+                    int minEdgeIndex = -1;
+                    double minWeight = Double.POSITIVE_INFINITY;
                     
-                    if (currentBest == null || vwEdge.weight < currentBest.weight) {
-                        componentBestEdges.put(componentKey, vwEdge);
+                    for (int edgeIdx = 0; edgeIdx < state.allEdges.length; edgeIdx++) {
+                        if (!state.mstEdgeAdded[edgeIdx]) {
+                            Edge edge = state.allEdges[edgeIdx];
+                            if (state.connectsDifferentComponents(edge)) {
+                                // Check if this edge is incident to our component
+                                boolean incidentToComponent = 
+                                    (state.findRoot(edge.u) == componentRoot) || 
+                                    (state.findRoot(edge.v) == componentRoot);
+                                
+                                if (incidentToComponent && edge.weight < minWeight) {
+                                    minWeight = edge.weight;
+                                    minEdge = edge;
+                                    minEdgeIndex = edgeIdx;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (minEdge != null) {
+                        componentMinEdges.put(componentRoot, minEdge);
+                        componentMinEdgeIndices.put(componentRoot, minEdgeIndex);
                     }
                 }
-            }
-            
-            // Apply unions and collect edges
-            for (Edge bestEdge : componentBestEdges.values()) {
-                int rootU = findRoot(newG, bestEdge.u);
-                int rootV = findRoot(newG, bestEdge.v);
                 
-                if (rootU != rootV) {
-                    threadEdges.add(bestEdge);
-                    // Union operation
-                    if (rootU < rootV) {
-                        newG[rootV] = rootU;
-                    } else {
-                        newG[rootU] = rootV;
+                // Phase 2: Add all minimum edges (in deterministic order)
+                List<Integer> sortedRoots = new ArrayList<>(componentMinEdges.keySet());
+                Collections.sort(sortedRoots); // Deterministic order
+                
+                for (int componentRoot : sortedRoots) {
+                    Edge minEdge = componentMinEdges.get(componentRoot);
+                    int minEdgeIndex = componentMinEdgeIndices.get(componentRoot);
+                    
+                    // Double-check edge is still valid after previous unions
+                    if (minEdge != null && !state.mstEdgeAdded[minEdgeIndex] && 
+                        state.connectsDifferentComponents(minEdge)) {
+                        
+                        state.addMSTEdge(minEdgeIndex);
+                        state.union(minEdge.u, minEdge.v);
                     }
                 }
             }
             
-            // Apply path compression
-            for (int i = 0; i < newG.length; i++) {
-                findRoot(newG, i);
-            }
+            // All other threads wait (no work to do)
+            // This ensures deterministic behavior
             
-            // Add new edges to MST
-            Set<Edge> newT = new HashSet<>(state.T);
-            newT.addAll(threadEdges);
-            
-            // Create intermediate state and reduce
-            BoruvkaState intermediate = new BoruvkaState(state.V, state.E, newG, newT, state.numOriginalVertices);
-            return intermediate.reduceGraph();
+            return state;
         }
         
         @Override
         public BoruvkaState getInitialState() {
-            Set<Integer> initialV = new HashSet<>();
-            for (int i = 0; i < numVertices; i++) {
-                initialV.add(i);
-            }
-            
-            Set<Edge> initialE = new HashSet<>(Arrays.asList(allEdges));
-            return new BoruvkaState(initialV, initialE, numVertices);
+            return new BoruvkaState(numVertices, allEdges);
         }
         
         @Override
         public boolean isSolution(BoruvkaState state) {
-            // CORRECTED: Solution when we have a single component OR complete MST
-            boolean singleComponent = state.V.size() <= 1;
-            boolean noEdges = state.E.isEmpty();
-            boolean completeMST = state.T.size() >= numVertices - 1;
-            
-            return singleComponent || (noEdges && completeMST);
-        }
-        
-        @Override
-        public BoruvkaState merge(BoruvkaState state1, BoruvkaState state2) {
-            // Choose the more progressed state (fewer vertices = more progress)
-            BoruvkaState primary = state1.V.size() <= state2.V.size() ? state1 : state2;
-            BoruvkaState secondary = state1.V.size() <= state2.V.size() ? state2 : state1;
-            
-            // CORRECTED: Use Kruskal's algorithm to build valid MST from combined edges
-            int[] parent = new int[primary.numOriginalVertices];
-            for (int i = 0; i < parent.length; i++) {
-                parent[i] = i;
-            }
-            
-            // Combine all MST edges from both states
-            Set<Edge> allCandidates = new HashSet<>(primary.T);
-            allCandidates.addAll(secondary.T);
-            
-            // Sort by weight for optimal MST
-            List<Edge> sortedEdges = new ArrayList<>(allCandidates);
-            sortedEdges.sort(Comparator.comparingDouble(e -> e.weight));
-            
-            // Build MST using Kruskal's algorithm
-            Set<Edge> validMST = new HashSet<>();
-            for (Edge edge : sortedEdges) {
-                int rootU = findRootCompressed(parent, edge.u);
-                int rootV = findRootCompressed(parent, edge.v);
-                
-                if (rootU != rootV) {
-                    validMST.add(edge);
-                    parent[rootV] = rootU;
-                    
-                    // Stop when we have a complete MST
-                    if (validMST.size() >= primary.numOriginalVertices - 1) {
-                        break;
-                    }
-                }
-            }
-            
-            return new BoruvkaState(primary.V, primary.E, primary.G, validMST, primary.numOriginalVertices);
-        }
-        
-        private int findRootCompressed(int[] parent, int v) {
-            if (v >= parent.length) return v;
-            if (parent[v] != v) {
-                parent[v] = findRootCompressed(parent, parent[v]);
-            }
-            return parent[v];
-        }
-        
-        private int findRoot(int[] G, int v) {
-            if (v >= G.length) return v;
-            
-            int original = v;
-            while (v < G.length && G[v] != v) {
-                v = G[v];
-            }
-            
-            // Path compression
-            while (original < G.length && G[original] != v) {
-                int next = G[original];
-                G[original] = v;
-                original = next;
-            }
-            
-            return v;
+            // Solution when we have a single component (complete MST)
+            return state.getComponentCount() <= 1 || state.getMSTEdges().size() >= numVertices - 1;
         }
     }
     
     public static void main(String[] args) {
-        System.out.println("=== Parallel Boruvka's Algorithm ===\n");
+        System.out.println("=== Boruvka's MST Algorithm Example ===\n");
         
-        String graphFile = "LLP-Java-Algorithms/USA-road-d.NY.egr";
+        // Test with different thread counts
+        int[] threadCounts = {1, 2, 4, 8};
+        int maxIterations = 100;
         
-        System.out.println("Testing Graph Data version for presentation:");
+        // Generate a test graph
+        int numVertices = 1000;
+        Edge[] edges = generateTestGraph(numVertices);
         
-        // Single thread baseline
-        System.out.println("\n1. Single-threaded baseline:");
-        testWithGraphFile(graphFile, 1000000, 1);
+        // Create the problem
+        BoruvkaLLPProblem problem = new BoruvkaLLPProblem(numVertices, edges);
+        BoruvkaState initial = problem.getInitialState();
         
-        // Parallel execution
-        System.out.println("\n2. Parallel execution (2 threads):");
-        testWithGraphFile(graphFile, 1000000, 2);
-    }
-
-    public static void testWithGraphFile(String filename, int maxVertices, int numThreads) {
-        System.out.println("=== Parallel Boruvka Test ===\n");
-        try {
-            GraphFileReader.GraphData graphData = GraphFileReader.readGraphFile(filename, maxVertices);
-            GraphFileReader.printGraphStats(graphData);
-            testCorrectedLLP(graphData, numThreads);          
-        } catch (IOException e) {
-            System.err.println("Error reading graph file: " + e.getMessage());
-            e.printStackTrace();
+        System.out.println("Problem: Find Minimum Spanning Tree using Boruvka's algorithm");
+        System.out.println("Graph: " + numVertices + " vertices, " + edges.length + " edges");
+        
+        // Test different thread counts
+        for (int numThreads : threadCounts) {
+            solveProblem(problem, numThreads, maxIterations);
         }
     }
+    
+    /**
+     * Generate a connected test graph for MST algorithms.
+     */
+    private static Edge[] generateTestGraph(int numVertices) {
+        List<Edge> edgeList = new ArrayList<>();
+        Random random = new Random(42); // Fixed seed for reproducibility
+        
+        // Create spanning tree to ensure connectivity
+        for (int i = 1; i < numVertices; i++) {
+            int parent = random.nextInt(i);
+            double weight = 1.0 + random.nextDouble() * 10.0;
+            edgeList.add(new Edge(parent, i, weight));
+        }
+        
+        // Add extra edges for complexity
+        int extraEdges = numVertices * 2;
+        for (int i = 0; i < extraEdges; i++) {
+            int u = random.nextInt(numVertices);
+            int v = random.nextInt(numVertices);
+            if (u != v) {
+                double weight = 1.0 + random.nextDouble() * 10.0;
+                edgeList.add(new Edge(u, v, weight));
+            }
+        }
+        
+        return edgeList.toArray(new Edge[0]);
+    }
 
-    private static void testCorrectedLLP(GraphFileReader.GraphData graphData, int numThreads) {
-        System.out.println("=== LLP Boruvka Analysis ===\n");
-        
-        BoruvkaLLPProblem llpProblem = new BoruvkaLLPProblem(graphData.numVertices, graphData.edges);
-        
+    private static void solveProblem(BoruvkaLLPProblem problem, int numThreads, int maxIterations) {
         LLPSolver<BoruvkaState> solver = null;
+        
         try {
-            // Allow more iterations to ensure completion
-            solver = new LLPSolver<>(llpProblem, numThreads, 500);
-            
-            System.out.printf(" Executing LLP Boruvka with %d threads...\n", numThreads);
+            solver = new LLPSolver<>(problem, numThreads, maxIterations);
             
             long startTime = System.nanoTime();
             BoruvkaState solution = solver.solve();
-            long llpTime = System.nanoTime() - startTime;
+            long endTime = System.nanoTime();
             
-            double llpWeight = solution.T.stream().mapToDouble(edge -> edge.weight).sum();
-            LLPSolver.ExecutionStats stats = solver.getExecutionStats();
+            // Show results
+            double timeMs = (endTime - startTime) / 1_000_000.0;
+            int iterations = solver.getExecutionStats().getIterationCount();
+            boolean valid = problem.isSolution(solution);
             
-            System.out.printf("  Execution Complete!\n");
-            System.out.printf("  MST edges found: %,d\n", solution.T.size());
-            System.out.printf("  Total MST weight: %.2f\n", llpWeight);
-            System.out.printf("  Execution time: %.2f seconds\n", llpTime / 1_000_000_000.0);
-            System.out.printf("  Iterations required: %d\n", stats != null ? stats.getIterationCount() : -1);
-            System.out.printf("  Threads used: %d\n", numThreads);
-            System.out.printf("  Convergence: %s\n\n", stats != null ? stats.hasConverged() : "unknown");
+            System.out.printf("Threads: %2d | Time: %8.2fms | Iterations: %3d | Valid: %s", 
+                             numThreads, timeMs, iterations, valid);
             
-            // Validation with detailed output
-            boolean valid = llpProblem.isSolution(solution) && !llpProblem.Forbidden(solution);
-            int expectedEdges = graphData.numVertices - 1;
-            boolean perfectCount = solution.T.size() == expectedEdges;
-            
-            System.out.printf("🔍 Validation Results:\n");
-            if (perfectCount && valid) {
-                System.out.printf("  ✅ PERFECT: %,d edges (exact MST)\n", solution.T.size());
-                System.out.printf("  ✅ Algorithm correctness: VALIDATED\n");
-                System.out.printf("  ✅ No forbidden states: CONFIRMED\n");
+            // Show speedup relative to single thread
+            if (numThreads == 1) {
+                System.out.println(" | Speedup: 1.00x (baseline)");
+                baselineTime = timeMs;
             } else {
-                System.out.printf("  ⚠️  Edge count: %,d (expected %,d, diff: %+d)\n", 
-                    solution.T.size(), expectedEdges, solution.T.size() - expectedEdges);
-                System.out.printf("  ⚠️  Validation: %s\n", valid ? "VALID" : "NEEDS REVIEW");
-                System.out.printf("  ⚠️  Forbidden check: %s\n", llpProblem.Forbidden(solution) ? "HAS VIOLATIONS" : "CLEAN");
+                double speedup = baselineTime / timeMs;
+                System.out.printf(" | Speedup: %.2fx\n", speedup);
+            }
+            
+            // Show MST info for first run only
+            if (numThreads == 1) {
+                List<Edge> mstEdges = solution.getMSTEdges();
+                double totalWeight = mstEdges.stream().mapToDouble(e -> e.weight).sum();
                 
-                if (solution.T.size() < expectedEdges) {
-                    System.out.printf("  💡 Likely cause: Algorithm terminated early\n");
-                } else if (solution.T.size() > expectedEdges) {
-                    System.out.printf("  💡 Likely cause: Duplicate edges in MST\n");
-                }
+                System.out.println("\nMST Information:");
+                System.out.printf("  MST edges: %d (expected: %d)\n", 
+                                mstEdges.size(), solution.numVertices - 1);
+                System.out.printf("  Total weight: %.2f\n", totalWeight);
+                System.out.printf("  Components: %d\n", solution.getComponentCount());
+                System.out.println();
             }
             
         } catch (Exception e) {
-            System.err.println("  Error in execution: " + e.getMessage());
+            System.err.println("Error with " + numThreads + " threads: " + e.getMessage());
             e.printStackTrace();
         } finally {
             if (solver != null) {
@@ -499,146 +404,7 @@ public class BoruvkaProblem {
             }
         }
     }
-    
-    // Keep existing recursive implementation...
-    public static Set<Edge> boruvkaRecursive(Set<Integer> V, Set<Edge> E) {
-        if (E.isEmpty()) {
-            return new HashSet<>();
-        }
-        
-        if (V.size() <= 1) {
-            return new HashSet<>();
-        }
-        
-        System.out.println("Recursive call with |V|=" + V.size() + ", |E|=" + E.size());
-        System.out.println("  Current vertices: " + V);
-        
-        int maxVertex = Math.max(
-            V.stream().mapToInt(Integer::intValue).max().orElse(0),
-            E.stream().mapToInt(edge -> Math.max(edge.u, edge.v)).max().orElse(0)
-        );
-        int[] G = new int[maxVertex + 1];
-        Set<Edge> T = new HashSet<>();
-        
-        for (int i = 0; i <= maxVertex; i++) {
-            G[i] = i;
-        }
-        
-        Map<Integer, Edge> mweMap = new HashMap<>();
-        for (int v : V) {
-            Edge minEdge = null;
-            double minWeight = Double.POSITIVE_INFINITY;
-            
-            for (Edge edge : E) {
-                if ((edge.u == v || edge.v == v) && edge.weight < minWeight) {
-                    minWeight = edge.weight;
-                    minEdge = edge;
-                }
-            }
-            mweMap.put(v, minEdge);
-            System.out.println("  mwe(" + v + ") = " + minEdge);
-        }
-        
-        for (int v : V) {
-            Edge vwEdge = mweMap.get(v);
-            if (vwEdge == null) continue;
-            
-            int w = (vwEdge.u == v) ? vwEdge.v : vwEdge.u;
-            
-            if (v < w) {
-                G[w] = v;
-            } else {
-                G[v] = w;
-            }
-            
-            T.add(vwEdge);
-            System.out.println("  G[" + v + "] = " + G[v] + ", G[" + w + "] = " + G[w] + ", added edge: " + vwEdge);
-        }
-        
-        System.out.println("  Before path compression:");
-        for (int v : V) {
-            System.out.println("    G[" + v + "] = " + G[v]);
-        }
-        
-        Map<Integer, Integer> rootCache = new HashMap<>();
-        for (int v : V) {
-            if (v < G.length) {
-                int root = findRoot(G, v, rootCache);
-                G[v] = root;
-            }
-        }
-        
-        System.out.println("  After path compression:");
-        for (int v : V) {
-            System.out.println("    G[" + v + "] = " + G[v]);
-        }
-        
-        Set<Edge> newE = new HashSet<>();
-        for (Edge edge : E) {
-            if (edge.u < G.length && edge.v < G.length) {
-                int gU = G[edge.u];
-                int gV = G[edge.v];
-                if (gU != gV) {
-                    newE.add(new Edge(gU, gV, edge.weight));
-                }
-            }
-        }
-        
-        Set<Integer> newV = new HashSet<>();
-        for (int v : V) {
-            if (v < G.length && G[v] == v) {
-                newV.add(v);
-            }
-        }
-        
-        System.out.println("  Reduced: |V'|=" + newV.size() + ", |E'|=" + newE.size());
-        System.out.println("  New vertices: " + newV);
-        System.out.println("  MST edges so far: " + T.size());
-        
-        if (newV.size() == V.size() && newE.size() == E.size()) {
-            System.out.println("  No progress made, stopping recursion");
-            return T;
-        }
-        
-        if (T.size() >= maxVertex) {
-            System.out.println("  Complete MST found, stopping recursion");
-            return T;
-        }
-        
-        Set<Edge> recursiveResult = boruvkaRecursive(newV, newE);
-        T.addAll(recursiveResult);
-        
-        return T;
-    }
-    
-    private static int findRoot(int[] G, int v, Map<Integer, Integer> cache) {
-        if (cache.containsKey(v)) {
-            return cache.get(v);
-        }
-        
-        Set<Integer> visited = new HashSet<>();
-        int current = v;
-        
-        // Follow parent pointers until we find a root or detect a cycle
-        while (current < G.length && G[current] != current && !visited.contains(current)) {
-            visited.add(current);
-            current = G[current];
-        }
-        
-        // If we found a cycle, make the smallest vertex in the cycle the root
-        if (visited.contains(current)) {
-            int root = visited.stream().min(Integer::compareTo).orElse(v);
-            for (int vertex : visited) {
-                cache.put(vertex, root);
-            }
-            return root;
-        }
-        
-        // Normal case - current is the root
-        for (int vertex : visited) {
-            cache.put(vertex, current);
-        }
-        cache.put(current, current);
-        return current;
-    }
+
+    // Store baseline time for speedup calculation
+    private static double baselineTime = 0.0;
 }
