@@ -51,26 +51,27 @@ public class ConnectedComponentsProblem {
     }
 
     /**
-     * Simplified state for Connected Components algorithm.
-     * Uses Union-Find with thread-safe operations.
+     * Simplified state with per-vertex locking to reduce contention.
      */
     static class ComponentState {
-        final Edge[] edges;           // Graph edges (readonly)
-        volatile int[] parent;        // Union-Find parent array - thread-safe
-        volatile int[] rank;          // Union-Find rank array for optimization
-        final int numVertices;        // Number of vertices
-        final Object lock = new Object(); // Synchronization lock
+        final Edge[] edges;
+        volatile int[] parent;
+        volatile int[] rank;
+        final int numVertices;
+        private final Object[] locks; // Per-vertex locks instead of global lock
         
         public ComponentState(int numVertices, Edge[] edges) {
             this.numVertices = numVertices;
             this.edges = edges.clone();
             this.parent = new int[numVertices];
             this.rank = new int[numVertices];
+            this.locks = new Object[numVertices];
             
-            // Initialize Union-Find: each vertex is its own parent
+            // Initialize Union-Find and locks
             for (int i = 0; i < numVertices; i++) {
                 parent[i] = i;
                 rank[i] = 0;
+                locks[i] = new Object();
             }
         }
         
@@ -80,17 +81,19 @@ public class ConnectedComponentsProblem {
         public int findRoot(int vertex) {
             if (vertex >= parent.length) return vertex;
             
-            // Path compression
-            if (parent[vertex] != vertex) {
-                parent[vertex] = findRoot(parent[vertex]);
+            // Path compression with per-vertex locking
+            synchronized (locks[vertex]) {
+                if (parent[vertex] != vertex) {
+                    parent[vertex] = findRoot(parent[vertex]);
+                }
+                return parent[vertex];
             }
-            return parent[vertex];
         }
         
         /**
-         * Thread-safe union of two components with rank optimization.
+         * Thread-safe union with ordered locking to prevent deadlock.
          */
-        public synchronized boolean union(int u, int v) {
+        public boolean union(int u, int v) {
             int rootU = findRoot(u);
             int rootV = findRoot(v);
             
@@ -98,16 +101,30 @@ public class ConnectedComponentsProblem {
                 return false; // Already in same component
             }
             
-            // Union by rank
-            if (rank[rootU] < rank[rootV]) {
-                parent[rootU] = rootV;
-            } else if (rank[rootU] > rank[rootV]) {
-                parent[rootV] = rootU;
-            } else {
-                parent[rootV] = rootU;
-                rank[rootU]++;
+            // Order locks to prevent deadlock (always acquire lower index first)
+            int lock1 = Math.min(rootU, rootV);
+            int lock2 = Math.max(rootU, rootV);
+            
+            synchronized (locks[lock1]) {
+                synchronized (locks[lock2]) {
+                    // Re-check roots after acquiring locks
+                    rootU = findRoot(u);
+                    rootV = findRoot(v);
+                    
+                    if (rootU == rootV) return false;
+                    
+                    // Union by rank
+                    if (rank[rootU] < rank[rootV]) {
+                        parent[rootU] = rootV;
+                    } else if (rank[rootU] > rank[rootV]) {
+                        parent[rootV] = rootU;
+                    } else {
+                        parent[rootV] = rootU;
+                        rank[rootU]++;
+                    }
+                    return true;
+                }
             }
-            return true;
         }
         
         /**
