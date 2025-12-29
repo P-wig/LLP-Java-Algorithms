@@ -2,7 +2,6 @@ package com.llp.framework;
 
 import com.llp.algorithm.LLPProblem;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Minimal execution engine for parallel LLP algorithms.

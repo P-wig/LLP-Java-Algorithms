@@ -1,7 +1,6 @@
 package com.llp.algorithm;
 
 import com.llp.framework.LLPEngine;
-import java.util.concurrent.*;
 
 /**
  * Simplified LLPSolver without configuration complexity.

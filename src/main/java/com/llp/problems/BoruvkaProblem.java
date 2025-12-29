@@ -2,10 +2,8 @@ package com.llp.problems;
 
 import com.llp.algorithm.LLPProblem;
 import com.llp.algorithm.LLPSolver;
-import com.llp.framework.GraphFileReader;
 
 import java.util.*;
-import java.io.*;
 
 /**
  * Boruvka's MST Algorithm using the simplified LLP framework.
@@ -316,7 +314,6 @@ public class BoruvkaProblem {
         
         // Create the problem
         BoruvkaLLPProblem problem = new BoruvkaLLPProblem(numVertices, edges);
-        BoruvkaState initial = problem.getInitialState();
         
         System.out.println("Problem: Find Minimum Spanning Tree using Boruvka's algorithm");
         System.out.println("Graph: " + numVertices + " vertices, " + edges.length + " edges");

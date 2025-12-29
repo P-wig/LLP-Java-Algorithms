@@ -186,7 +186,6 @@ public class BellmanFordProblem {
         
         // Create the problem
         BellmanFordLLPProblem problem = new BellmanFordLLPProblem(numVertices, edges, source);
-        BellmanFordState initial = problem.getInitialState();
         
         System.out.println("Problem: Find shortest paths from source vertex " + source);
         System.out.println("Graph: " + numVertices + " vertices, " + edges.length + " edges");
