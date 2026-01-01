@@ -1,11 +1,12 @@
 package com.llp.problems;
 
-import java.util.Arrays;
 import com.llp.algorithm.LLPProblem;
 import com.llp.algorithm.LLPSolver;
 
+import java.util.Arrays;
+
 /**
- * Stable Marriage Problem using the LLP framework.
+ * Stable Marriage Problem using the simplified LLP framework.
  * 
  * Problem Description:
  * The stable marriage problem involves matching n men and n women where each person
@@ -14,29 +15,32 @@ import com.llp.algorithm.LLPSolver;
  * 
  * LLP Implementation Strategy:
  * - State: Current matching configuration with preference lists and rankings
- * - Forbidden: Matching has unstable pairs (mutual preference violations)
- * - Advance: Unmatched individuals propose to preferred partners
- * - Ensure: Fix unstable pairs by creating better matches
- * - Parallelism: Distribute proposal and stability checking across threads
+ * - Forbidden: Returns true when unmatched people exist or instability detected
+ * - Advance: Use Gale-Shapley inspired approach to create stable matches
+ * - Parallelism: Threads work on different men simultaneously with coordination
  */
-public class StableMarriageProblem implements LLPProblem<StableMarriageProblem.StableMarriageState> {
+public class StableMarriageProblem {
     
     /**
-     * State class representing a matching configuration in the stable marriage problem.
+     * Enhanced state class with optimizations for performance and reliability.
      */
-    public static class StableMarriageState {
-        public final int n;                  // Number of men/women
-        public final int[][] menPrefs;       // menPrefs[i][j] = j-th preference of man i
-        public final int[][] womenPrefs;     // womenPrefs[i][j] = j-th preference of woman i
-        public final int[][] menRanking;     // menRanking[i][j] = rank of woman j in man i's preferences
-        public final int[][] womenRanking;   // womenRanking[i][j] = rank of man j in woman i's preferences
-        public final int[] menPartner;       // menPartner[i] = partner of man i (-1 if unmatched)
-        public final int[] womenPartner;     // womenPartner[i] = partner of woman i (-1 if unmatched)
+    static class OptimizedStableMarriageState {
+        final int n;                          // Number of men/women
+        final int[][] menPrefs;               // menPrefs[i][j] = j-th preference of man i
+        final int[][] womenPrefs;             // womenPrefs[i][j] = j-th preference of woman i
+        final int[][] menRanking;             // menRanking[i][j] = rank of woman j in man i's preferences
+        final int[][] womenRanking;           // womenRanking[i][j] = rank of man j in woman i's preferences
+        volatile int[] menPartner;            // menPartner[i] = partner of man i (-1 if unmatched)
+        volatile int[] womenPartner;          // womenPartner[i] = partner of woman i (-1 if unmatched)
+        volatile int[] nextProposal;          // nextProposal[i] = next woman index for man i to try
+        volatile boolean[] menFree;           // menFree[i] = true if man i is unmatched
+        volatile int unmatchedCount;          // Number of unmatched men (for fast completion check)
+        volatile int iterationCount;          // Track iterations for statistics
 
         /**
          * Creates initial state with given preferences and no matches.
          */
-        public StableMarriageState(int n, int[][] menPrefs, int[][] womenPrefs) {
+        public OptimizedStableMarriageState(int n, int[][] menPrefs, int[][] womenPrefs) {
             this.n = n;
             this.menPrefs = new int[n][n];
             this.womenPrefs = new int[n][n];
@@ -44,64 +48,59 @@ public class StableMarriageProblem implements LLPProblem<StableMarriageProblem.S
             this.womenRanking = new int[n][n];
 
             // Deep copy preferences to ensure immutability
-            for (int i = 0; i < n; i++){
+            for (int i = 0; i < n; i++) {
                 System.arraycopy(menPrefs[i], 0, this.menPrefs[i], 0, n);
                 System.arraycopy(womenPrefs[i], 0, this.womenPrefs[i], 0, n);
             }
 
-            // Build ranking arrays for fast preference comparisons
-            for (int i = 0; i < n; i++){
-                for (int j = 0; j < n; j++){
+            // Build ranking arrays for fast preference comparisons O(1)
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
                     menRanking[i][menPrefs[i][j]] = j;
                     womenRanking[i][womenPrefs[i][j]] = j;
                 }
             }
 
-            // Initialize all as unmatched -1
+            // Initialize all as unmatched
             this.menPartner = new int[n];
             this.womenPartner = new int[n];
+            this.nextProposal = new int[n]; // Start proposing to first preference
+            this.menFree = new boolean[n];
+            
             Arrays.fill(menPartner, -1);
             Arrays.fill(womenPartner, -1);
-        }
-
-        /**
-         * Copy constructor for creating new states with updated matches.
-         */
-        public StableMarriageState(int n, int[][] menPrefs, int[][] womenPrefs, 
-                                 int[][] menRanking, int[][] womenRanking,
-                                 int[] menPartner, int[] womenPartner) {
-            this.n = n;
-            this.menPrefs = menPrefs; // Share immutable preference data
-            this.womenPrefs = womenPrefs;
-            this.menRanking = menRanking;
-            this.womenRanking = womenRanking;
+            Arrays.fill(nextProposal, 0);
+            Arrays.fill(menFree, true);
             
-            // Copy mutable matching arrays
-            this.menPartner = Arrays.copyOf(menPartner, n);
-            this.womenPartner = Arrays.copyOf(womenPartner, n);
+            this.unmatchedCount = n;
+            this.iterationCount = 0;
         }
-
+        
         /**
-         * Creates new state with the specified man-woman match, breaking existing matches as needed.
+         * Thread-safe method to create a match between man and woman.
+         * Optimized to minimize synchronization time.
          */
-        public StableMarriageState withMatch(int man, int woman) {
-            int[] newMenPartner = Arrays.copyOf(menPartner, n);
-            int[] newWomenPartner = Arrays.copyOf(womenPartner, n);
-            
-            // Break existing matches
-            if (newMenPartner[man] != -1) {
-                newWomenPartner[newMenPartner[man]] = -1;
-            }
-            if (newWomenPartner[woman] != -1) {
-                newMenPartner[newWomenPartner[woman]] = -1;
+        public synchronized void createMatch(int man, int woman) {
+            // Handle the displaced man (if woman was already matched)
+            int displacedMan = womenPartner[woman];
+            if (displacedMan != -1) {
+                menPartner[displacedMan] = -1;
+                menFree[displacedMan] = true;
+                unmatchedCount++;
             }
             
-            // Create new match
-            newMenPartner[man] = woman;
-            newWomenPartner[woman] = man;
+            // Handle the man's previous partner (if he was already matched)
+            if (menPartner[man] != -1) {
+                womenPartner[menPartner[man]] = -1;
+            } else {
+                // Man was unmatched, now he's matched
+                menFree[man] = false;
+                unmatchedCount--;
+            }
             
-            return new StableMarriageState(n, menPrefs, womenPrefs, menRanking, womenRanking,
-                                         newMenPartner, newWomenPartner);
+            // Create the new match
+            menPartner[man] = woman;
+            womenPartner[woman] = man;
         }
         
         /**
@@ -121,315 +120,394 @@ public class StableMarriageProblem implements LLPProblem<StableMarriageProblem.S
         }
 
         /**
-         * Returns true if all people are matched (complete matching).
+         * Fast completion check using cached count.
          */
         public boolean isComplete() {
+            return unmatchedCount == 0;
+        }
+        
+        /**
+         * Get the next woman this man should propose to.
+         */
+        public int getNextProposal(int man) {
+            if (nextProposal[man] >= n) return -1; // No more proposals
+            
+            synchronized (this) { // Minimal sync only for increment
+                if (nextProposal[man] >= n) return -1; // Double-check
+                return menPrefs[man][nextProposal[man]++];
+            }
+        }
+        
+        /**
+         * Check if man has more proposals to make.
+         */
+        public boolean hasMoreProposals(int man) {
+            return nextProposal[man] < n;
+        }
+        
+        /**
+         * Increment iteration count (thread-safe).
+         */
+        public synchronized void incrementIterations() {
+            iterationCount++;
+        }
+        
+        /**
+         * Get current iteration count.
+         */
+        public int getIterationCount() {
+            return iterationCount;
+        }
+        
+        /**
+         * Get number of unmatched men.
+         */
+        public int getUnmatchedCount() {
+            return unmatchedCount;
+        }
+    }
+
+    /**
+     * Optimized Stable Marriage problem using Gale-Shapley algorithm principles.
+     */
+    static class OptimizedStableMarriageLLPProblem implements LLPProblem<OptimizedStableMarriageState> {
+        
+        private final int n;                 // Number of men/women
+        private final int[][] menPrefs;      // Men's preference lists
+        private final int[][] womenPrefs;    // Women's preference lists
+
+        /**
+         * Creates a new stable marriage problem instance with given preference lists.
+         */
+        public OptimizedStableMarriageLLPProblem(int[][] menPrefs, int[][] womenPrefs) {
+            this.n = menPrefs.length;
+            if (n != womenPrefs.length || n != menPrefs[0].length || n != womenPrefs[0].length) {
+                throw new IllegalArgumentException("Preference arrays must be n x n");
+            }
+            
+            this.menPrefs = new int[n][n];
+            this.womenPrefs = new int[n][n];
+            
+            // Deep copy to ensure immutability
             for (int i = 0; i < n; i++) {
-                if (menPartner[i] == -1 || womenPartner[i] == -1) {
-                    return false;
-                }
-            }
-            return true;
-        }
-    }
-
-    private final int n;                 // Number of men/women
-    private final int[][] menPrefs;      // Men's preference lists
-    private final int[][] womenPrefs;    // Women's preference lists
-
-    /**
-     * Creates a new stable marriage problem instance with given preference lists.
-     */
-    public StableMarriageProblem(int[][] menPrefs, int[][] womenPrefs) {
-        this.n = menPrefs.length;
-        if (n != womenPrefs.length || n != menPrefs[0].length || n != womenPrefs[0].length) {
-            throw new IllegalArgumentException("Preference arrays must be n x n");
-        }
-        
-        this.menPrefs = new int[n][n];
-        this.womenPrefs = new int[n][n];
-        
-        // Deep copy to ensure immutability
-        for (int i = 0; i < n; i++) {
-            System.arraycopy(menPrefs[i], 0, this.menPrefs[i], 0, n);
-            System.arraycopy(womenPrefs[i], 0, this.womenPrefs[i], 0, n);
-        }
-    }
-    
-    /**
-     * Returns the initial state with no matches.
-     */
-    @Override
-    public StableMarriageState getInitialState() {
-        return new StableMarriageState(n, menPrefs, womenPrefs);
-    }
-
-    /**
-     * Returns true if the current matching has any unstable pairs.
-     */
-    @Override
-    public boolean Forbidden(StableMarriageState state) {      
-        // Check all possible pairs for instability
-        for (int man = 0; man < state.n; man++){
-            for (int woman = 0; woman < state.n; woman++){
-                if (state.menPartner[man] == woman){
-                    continue; // Skip if already matched to each other
-                }
-
-                // Check if this pair would prefer each other over current partners
-                boolean manPrefersWoman = state.manPrefers(man, woman);
-                boolean womanPrefersMan = state.womanPrefers(woman, man);
-
-                if (manPrefersWoman && womanPrefersMan) {
-                    return true; // Found unstable pair
-                }
+                System.arraycopy(menPrefs[i], 0, this.menPrefs[i], 0, n);
+                System.arraycopy(womenPrefs[i], 0, this.womenPrefs[i], 0, n);
             }
         }
         
-        return false; 
-    }
-    
-    /**
-     * Fixes unstable pairs by creating new matches, distributed across threads.
-     */
-    @Override
-    public StableMarriageState Ensure(StableMarriageState state, int threadId, int totalThreads) {
-        StableMarriageState currentState = state;
-
-        // Distribute men among threads for parallel processing
-        for (int man = threadId; man < state.n; man += totalThreads) {
-            for (int woman = 0; woman < state.n; woman++) {
-                if (currentState.menPartner[man] == woman) {
-                    continue; // Skip if already matched
-                }
-
-                // Check for unstable pair and fix it
-                boolean manPrefersWoman = currentState.manPrefers(man, woman);
-                boolean womanPrefersMan = currentState.womanPrefers(woman, man);
-
-                if (manPrefersWoman && womanPrefersMan) {
-                    currentState = currentState.withMatch(man, woman); // Fix unstable pair
-                }
-            }
+        /**
+         * Returns the initial state with no matches.
+         */
+        @Override
+        public OptimizedStableMarriageState getInitialState() {
+            return new OptimizedStableMarriageState(n, menPrefs, womenPrefs);
         }
 
-        return currentState;
-    }
-    
-    /**
-     * Makes progress by having unmatched men propose to their preferred women.
-     */
-    @Override
-    public StableMarriageState Advance(StableMarriageState state, int threadId, int totalThreads) {       
-        StableMarriageState currentState = state;
-
-        // Distribute unmatched men among threads for parallel proposals
-        for (int man = threadId; man < state.n; man += totalThreads) {
-            if (currentState.menPartner[man] == -1) { // If man is unmatched
-                // Try preferences in order until finding an acceptable match
-                for (int prefRank = 0; prefRank < state.n; prefRank++) {
-                    int woman = currentState.menPrefs[man][prefRank];
-
-                    if (currentState.womenPartner[woman] == -1) {
-                        // Woman is unmatched, create match
-                        currentState = currentState.withMatch(man, woman);
-                        break;
-                    }
-                    else if (currentState.womanPrefers(woman, man)) {
-                        // Woman prefers this man over current partner
-                        currentState = currentState.withMatch(man, woman);
-                        break;
-                    }
+        /**
+         * Returns true when there are unmatched men who can make proposals.
+         */
+        @Override
+        public boolean Forbidden(OptimizedStableMarriageState state) {
+            // Precise check: forbidden when unmatched men have valid proposals to make
+            for (int man = 0; man < state.n; man++) {
+                if (state.menFree[man] && state.hasMoreProposals(man)) {
+                    return true; // Found unmatched man who can make proposals
                 }
             }
+            return false; // No work available
         }
 
-        return currentState;
-    }
-    
-    /**
-     * Returns true if the matching is both stable and complete.
-     */
-    @Override
-    public boolean isSolution(StableMarriageState state) {
-        return !Forbidden(state) && state.isComplete();
-    }
-    
-    /**
-     * Merges two partial matchings from different threads, resolving conflicts by preferences.
-     */
-    @Override
-    public StableMarriageState merge(StableMarriageState state1, StableMarriageState state2) {
-        StableMarriageState result = new StableMarriageState(state1.n, state1.menPrefs, state1.womenPrefs);
-
-        // First, add all matches from state1
-        for (int man = 0; man < state1.n; man++){
-            if (state1.menPartner[man] != -1) {
-                int woman = state1.menPartner[man];
-                result = result.withMatch(man, woman);
+        /**
+         * Optimized Gale-Shapley algorithm with reduced synchronization overhead.
+         */
+        @Override
+        public OptimizedStableMarriageState Advance(OptimizedStableMarriageState state, int threadId, int totalThreads) {
+            // Increment iterations (Thread-0 only)
+            if (threadId == 0) {
+                state.incrementIterations();
             }
-        }
 
-        // Then, add matches from state2, resolving conflicts by preference
-        for (int man = 0; man < state2.n; man++){
-            if (state2.menPartner[man] != -1) {
-                int woman = state2.menPartner[man];
-
-                if (result.menPartner[man] == -1) { 
-                    // Man is unmatched in result, check if woman is available or prefers him
-                    if (result.womenPartner[woman] == -1 || result.womanPrefers(woman, man)) {
-                        result = result.withMatch(man, woman);
-                    }
-                }
-                else {
-                    // Man is already matched, check if he prefers the new woman
-                    int currentWoman = result.menPartner[man];
-
-                    if (result.menRanking[man][woman] < result.menRanking[man][currentWoman]) {
-                        if (result.womenPartner[woman] == -1 || result.womanPrefers(woman, man)) {
-                            result = result.withMatch(man, woman);
+            // Process multiple proposals per thread for better parallelism
+            int proposalsPerThread = Math.max(1, state.n / totalThreads);
+            
+            for (int attempt = 0; attempt < proposalsPerThread; attempt++) {
+                // Each thread handles different men in round-robin fashion
+                for (int man = threadId; man < state.n; man += totalThreads) {
+                    
+                    // Only process unmatched men who still have proposals to make
+                    if (state.menFree[man] && state.hasMoreProposals(man)) {
+                        
+                        // Get next woman to propose to
+                        int woman = state.getNextProposal(man);
+                        if (woman == -1) continue; // No more proposals for this man
+                        
+                        // Minimal synchronized section for matching decision
+                        synchronized (state) {
+                            if (state.womenPartner[woman] == -1) {
+                                // Woman is free - create match immediately
+                                state.createMatch(man, woman);
+                            }
+                            else if (state.womanPrefers(woman, man)) {
+                                // Woman prefers this man over current partner
+                                state.createMatch(man, woman);
+                            }
                         }
                     }
                 }
             }
+
+            return state;
         }
         
-        return result;
+        /**
+         * Solution is complete when all men are matched.
+         */
+        @Override
+        public boolean isSolution(OptimizedStableMarriageState state) {
+            return state.isComplete();
+        }
     }
     
     /**
      * Main method demonstrating the stable marriage problem with test cases.
      */
     public static void main(String[] args) {
-        System.out.println("=== Stable Marriage Problem Example ===\n");
+        System.out.println("=== Optimized Stable Marriage Problem Example ===\n");
 
         // Test Case 1: Simple 3x3 matching
         testCase1();
         
         System.out.println("\n============================================================\n");
         
-        // Test Case 2: More complex 3x3 matching
+        // Test Case 2: More complex 3x3 matching  
         testCase2();
+        
+        System.out.println("\n============================================================\n");
+        
+        // Test Case 3: Larger problem for performance testing
+        testCase3();
+        
+        System.out.println("\n============================================================\n");
+        
+        // Test Case 4: Even larger for scalability
+        testCase4();
     }
 
     /**
      * Test case 1: Classic 3x3 stable marriage scenario.
      */
-    private static void testCase1(){
-        System.out.println("Test Case 1: Classic 3x3 Stable Marriage");
-        System.out.println("----------------------------------------");
-
+    private static void testCase1() {
+        System.out.println("=== Test Case 1: Classic 3x3 ===");
+        
         int[][] menPrefs = {
-            {0, 1, 2},  
-            {1, 2, 0},   
-            {0, 1, 2}   
+            {0, 1, 2},  // Man 0 prefers: Woman 0, Woman 1, Woman 2
+            {1, 2, 0},  // Man 1 prefers: Woman 1, Woman 2, Woman 0  
+            {0, 1, 2}   // Man 2 prefers: Woman 0, Woman 1, Woman 2
         };
 
         int[][] womenPrefs = {
-            {1, 0, 2},  
-            {0, 2, 1}, 
-            {0, 1, 2} 
+            {1, 0, 2},  // Woman 0 prefers: Man 1, Man 0, Man 2
+            {0, 2, 1},  // Woman 1 prefers: Man 0, Man 2, Man 1
+            {0, 1, 2}   // Woman 2 prefers: Man 0, Man 1, Man 2
         };
         
-        int numThreads = 4;
-        int maxIterations = 100;
-        
-        StableMarriageProblem problem = new StableMarriageProblem(menPrefs, womenPrefs);
-        StableMarriageState initial = problem.getInitialState();
-        
-        System.out.println("Initial state: " + initial);
-        System.out.println("Threads: " + numThreads);
-        System.out.println("Expected: One possible stable matching is M0↔W0, M1↔W2, M2↔W1");
-        
-        solveProblem(problem, numThreads, maxIterations);
+        runTestCase("Classic 3x3", menPrefs, womenPrefs);
     }
 
     /**
      * Test case 2: Complex 3x3 stable marriage scenario.
      */
     private static void testCase2() {
-        System.out.println("Test Case 2: Complex 3x3 Stable Marriage");
-        System.out.println("----------------------------------------");
+        System.out.println("=== Test Case 2: Complex 3x3 ===");
         
         int[][] menPrefs = {
-            {2, 1, 0},
-            {0, 1, 2},
-            {1, 0, 2} 
+            {2, 1, 0},  // Man 0 prefers: Woman 2, Woman 1, Woman 0
+            {0, 1, 2},  // Man 1 prefers: Woman 0, Woman 1, Woman 2
+            {1, 0, 2}   // Man 2 prefers: Woman 1, Woman 0, Woman 2
         };
         
         int[][] womenPrefs = {
-            {2, 1, 0}, 
-            {0, 2, 1}, 
-            {1, 0, 2} 
+            {2, 1, 0},  // Woman 0 prefers: Man 2, Man 1, Man 0
+            {0, 2, 1},  // Woman 1 prefers: Man 0, Man 2, Man 1
+            {1, 0, 2}   // Woman 2 prefers: Man 1, Man 0, Man 2
         };
         
-        int numThreads = 4;
-        int maxIterations = 100;
+        runTestCase("Complex 3x3", menPrefs, womenPrefs);
+    }
+    
+    /**
+     * Test case 3: Medium scale problem.
+     */
+    private static void testCase3() {
+        System.out.println("=== Test Case 3: Medium Scale (8x8) ===");
         
-        StableMarriageProblem problem = new StableMarriageProblem(menPrefs, womenPrefs);
-        StableMarriageState initial = problem.getInitialState();
+        int n = 8;
+        int[][] menPrefs = generateRandomPreferences(n, 42);
+        int[][] womenPrefs = generateRandomPreferences(n, 84);
         
-        System.out.println("Initial state: " + initial);
-        System.out.println("Threads: " + numThreads);
-        System.out.println("Expected: One possible stable matching is (M0,W2), (M1,W0), (M2,W1)");
+        runTestCase("Random 8x8", menPrefs, womenPrefs);
+    }
+    
+    /**
+     * Test case 4: Larger scale problem for performance testing.
+     */
+    private static void testCase4() {
+        System.out.println("=== Test Case 4: Large Scale (20x20) ===");
         
-        solveProblem(problem, numThreads, maxIterations);
+        int n = 20;
+        int[][] menPrefs = generateRandomPreferences(n, 123);
+        int[][] womenPrefs = generateRandomPreferences(n, 456);
+        
+        runTestCase("Random 20x20", menPrefs, womenPrefs);
+    }
+    
+    /**
+     * Generate random preference lists for testing.
+     */
+    private static int[][] generateRandomPreferences(int n, int seed) {
+        java.util.Random random = new java.util.Random(seed);
+        int[][] prefs = new int[n][n];
+        
+        for (int i = 0; i < n; i++) {
+            // Create a permutation of 0 to n-1
+            java.util.List<Integer> list = new java.util.ArrayList<>();
+            for (int j = 0; j < n; j++) {
+                list.add(j);
+            }
+            java.util.Collections.shuffle(list, random);
+            
+            for (int j = 0; j < n; j++) {
+                prefs[i][j] = list.get(j);
+            }
+        }
+        
+        return prefs;
     }
 
     /**
-     * Solves the stable marriage problem using the LLP framework and prints results.
+     * Run a test case with performance measurement across different thread counts.
      */
-    private static void solveProblem(StableMarriageProblem problem, int numThreads, int maxIterations) {
-        System.out.println("\n--- Framework Solution ---");
+    private static void runTestCase(String testName, int[][] menPrefs, int[][] womenPrefs) {
+        System.out.println("Input: " + testName);
         
-        LLPSolver<StableMarriageState> solver = null;
+        // Only print preferences for small cases
+        if (menPrefs.length <= 8) {
+            System.out.println("Men's preferences:");
+            printPreferences(menPrefs);
+            System.out.println("Women's preferences:");
+            printPreferences(womenPrefs);
+        }
         
-        try {
-            solver = new LLPSolver<>(problem, numThreads, maxIterations);
-            
-            System.out.println("Solving with LLP framework...");
-            
-            long startTime = System.currentTimeMillis();
-            StableMarriageState solution = solver.solve();
-            long endTime = System.currentTimeMillis();
-            
-            System.out.println("\nSolution found!");
-            printSolution(solution);
-            System.out.println("\nExecution time: " + (endTime - startTime) + "ms");
-            System.out.println("Is valid solution? " + problem.isSolution(solution));
-            System.out.println("Is forbidden? " + problem.Forbidden(solution));
-            System.out.println("Is complete? " + solution.isComplete());
-            
-            // Verify no unstable pairs exist
-            verifyStability(solution);
-            
-            // Get statistics
-            LLPSolver.ExecutionStats stats = solver.getExecutionStats();
-            if (stats != null) {
-                System.out.println("Total iterations: " + stats.getIterationCount());
-                System.out.println("Converged: " + stats.hasConverged());
-            }
-            
-        } catch (Exception e) {
-            System.err.println("Error: " + e.getMessage());
-            e.printStackTrace();
+        int[] threadCounts = {1, 2, 4, 8};
+        int maxIterations = Math.max(50, menPrefs.length * 2); // Scale iterations with problem size
+        double localBaselineTime = 0.0;
+        
+        // Test different thread counts
+        for (int numThreads : threadCounts) {
+            localBaselineTime = solveProblem(menPrefs, womenPrefs, numThreads, maxIterations, localBaselineTime);
         }
     }
 
-    private static void printSolution(StableMarriageState solution) {
+    /**
+     * Solve the stable marriage problem and measure performance.
+     */
+    private static double solveProblem(int[][] menPrefs, int[][] womenPrefs, int numThreads, int maxIterations, double baselineTime) {
+        LLPSolver<OptimizedStableMarriageState> solver = null;
+        
+        try {
+            OptimizedStableMarriageLLPProblem problem = new OptimizedStableMarriageLLPProblem(menPrefs, womenPrefs);
+            solver = new LLPSolver<>(problem, numThreads, maxIterations);
+            
+            long startTime = System.nanoTime();
+            OptimizedStableMarriageState solution = solver.solve();
+            long endTime = System.nanoTime();
+            
+            // Show results in compact format
+            double timeMs = (endTime - startTime) / 1_000_000.0;
+            int iterations = solution.getIterationCount();
+            boolean valid = problem.isSolution(solution);
+            boolean stable = isStable(solution);
+            boolean complete = solution.isComplete();
+            
+            System.out.printf("Threads: %2d | Time: %8.2fms | Iterations: %3d | Valid: %s | Stable: %s | Complete: %s", 
+                             numThreads, timeMs, iterations, valid, stable, complete);
+            
+            // Show speedup relative to single thread
+            if (numThreads == 1) {
+                System.out.println(" | Speedup: 1.00x (baseline)");
+                baselineTime = timeMs;
+            } else {
+                double speedup = baselineTime / timeMs;
+                System.out.printf(" | Speedup: %.2fx\n", speedup);
+            }
+            
+            // Show detailed results for first run only (and small problems only)
+            if (numThreads == 1) {
+                if (menPrefs.length <= 8) {
+                    printSolution(solution);
+                }
+                verifyStability(solution);
+                System.out.println();
+            }
+            
+            return baselineTime;
+            
+        } catch (Exception e) {
+            System.err.println("Error with " + numThreads + " threads: " + e.getMessage());
+            e.printStackTrace();
+            return baselineTime;
+        } finally {
+            if (solver != null) {
+                solver.shutdown();
+            }
+        }
+    }
+    
+    /**
+     * Check if the matching is stable (no unstable pairs).
+     */
+    private static boolean isStable(OptimizedStableMarriageState state) {
+        for (int man = 0; man < state.n; man++) {
+            for (int woman = 0; woman < state.n; woman++) {
+                if (state.menPartner[man] == woman) continue;
+                
+                if (state.manPrefers(man, woman) && state.womanPrefers(woman, man)) {
+                    return false; // Found unstable pair
+                }
+            }
+        }
+        return true;
+    }
+    
+    /**
+     * Print preference matrix in readable format.
+     */
+    private static void printPreferences(int[][] prefs) {
+        for (int i = 0; i < prefs.length; i++) {
+            System.out.printf("  Person %d: %s\n", i, Arrays.toString(prefs[i]));
+        }
+    }
+    
+    /**
+     * Print the final matching solution.
+     */
+    private static void printSolution(OptimizedStableMarriageState solution) {
         System.out.println("Final matching:");
         for (int man = 0; man < solution.n; man++) {
             int woman = solution.menPartner[man];
             if (woman != -1) {
-                System.out.printf("  Man %d - Woman %d\n", man, woman);
+                System.out.printf("  Man %d ↔ Woman %d\n", man, woman);
             } else {
                 System.out.printf("  Man %d is unmatched\n", man);
             }
         }
     }
 
-    private static void verifyStability(StableMarriageState state) {
-        System.out.println("\nStability verification:");
+    /**
+     * Verify that the solution has no unstable pairs.
+     */
+    private static void verifyStability(OptimizedStableMarriageState state) {
+        System.out.println("Stability verification:");
         boolean hasUnstablePair = false;
         
         for (int man = 0; man < state.n; man++) {
@@ -440,14 +518,14 @@ public class StableMarriageProblem implements LLPProblem<StableMarriageProblem.S
                 boolean womanPrefersMan = state.womanPrefers(woman, man);
                 
                 if (manPrefersWoman && womanPrefersMan) {
-                    System.out.printf("Unstable pair found: Man %d prefers Woman %d over his current partner\n", man, woman);
+                    System.out.printf("  ❌ Unstable pair found: Man %d and Woman %d prefer each other\n", man, woman);
                     hasUnstablePair = true;
                 }
             }
         }
         
         if (!hasUnstablePair) {
-            System.out.println("No unstable pairs found - matching is stable!");
+            System.out.println("  ✅ No unstable pairs found - matching is stable!");
         }
     }
 }
